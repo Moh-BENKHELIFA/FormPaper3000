@@ -1,0 +1,22 @@
+1. Création de la base de donnée
+2. Ajout de l'article à la base de donnée et création du dossier avec images 
+3. Création du module Vignette/Card de l'article.
+4. Chargement de la base de donnée sur la home page
+5. Création page de l'article simple avec double clique sur la vignette et supression de l'article 
+6. Modification de l'état de l'article (lecture)
+7. Ajout des modules qui glissent comme sur Notion - Sauvegarde en JSON
+8. Ajout de commandes pour modifier le type de modules pour la prise de notes
+9. Tri dans la liste des articles sur la page principale
+10. Changement de vue, tableau, ligne, vignette
+11. Intégration d'un LLM résumé de l'article.
+12. Intégration d'un chatbot pour poser des questions sur l'article. 
+13. Darkmode
+
+
+
+
+Dans la fenêtre de AddPaper, j'aimerai rajouter la possibilité de sélectionner parmi les catégories de papier qui existe déjà et éventuellement en rajouter/créer de nouvelle qui seraient sélectionner automatiquement après avoir été créer. 
+
+Il y a bien entendu la possibilité de choisir plusieurs catégories
+
+j'aimerai également rajouter une notification qui dit que le papier a été ajouté avec succès dans la base de donnée

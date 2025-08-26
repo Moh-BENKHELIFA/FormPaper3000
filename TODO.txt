@@ -1,12 +1,12 @@
-1. Création de la base de donnée
-2. Ajout de l'article à la base de donnée et création du dossier avec images 
-3. Création du module Vignette/Card de l'article.
-4. Chargement de la base de donnée sur la home page
+1. Création de la base de donnée     ------------------------
+2. Ajout de l'article à la base de donnée et création du dossier avec images ------------à modifier-
+3. Création du module Vignette/Card de l'article. ----------------------
+4. Chargement de la base de donnée sur la home page ---------------------
 5. Création page de l'article simple avec double clique sur la vignette et supression de l'article 
-6. Modification de l'état de l'article (lecture)
+6. Modification de l'état de l'article (lecture) -----------------------
 7. Ajout des modules qui glissent comme sur Notion - Sauvegarde en JSON
 8. Ajout de commandes pour modifier le type de modules pour la prise de notes
-9. Tri dans la liste des articles sur la page principale
+9. Tri dans la liste des articles sur la page principale ---------- à modifier
 10. Changement de vue, tableau, ligne, vignette
 11. Intégration d'un LLM résumé de l'article.
 12. Intégration d'un chatbot pour poser des questions sur l'article. 

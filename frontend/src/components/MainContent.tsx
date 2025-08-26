@@ -4,7 +4,7 @@ import PaperListView from './PaperListView';
 import PaperFilters from './PaperFilters';
 import { paperService } from '../services/paperService';
 import { useToast } from '../contexts/ToastContext';
-import type { PaperData } from '../services/paperService';
+import type { PaperData, ReadingStatus } from '../types/Paper';
 import type { FilterOptions, SortOptions, ViewMode } from './PaperFilters';
 
 interface MainContentProps {
@@ -132,7 +132,12 @@ const MainContent: React.FC<MainContentProps> = ({ activeView = 'home' }) => {
           bValue = (b.conference || '').toLowerCase();
           break;
         case 'reading_status':
-          const statusOrder = { 'non_lu': 0, 'en_cours': 1, 'lu': 2 };
+          const statusOrder: Record<ReadingStatus, number> = { 
+            'non_lu': 0, 
+            'en_cours': 1, 
+            'lu': 2, 
+            'favoris': 3  // ✅ Ajouter favoris
+          };
           aValue = statusOrder[a.reading_status];
           bValue = statusOrder[b.reading_status];
           break;
@@ -153,22 +158,22 @@ const MainContent: React.FC<MainContentProps> = ({ activeView = 'home' }) => {
 
   // Extraction des conférences uniques pour le filtre
   const uniqueConferences = useMemo(() => {
-    const conferences = papers
-      .map(paper => ({
-        name: paper.conference,
-        abbreviation: paper.conference_abbreviation
-      }))
-      .filter((conf) => !!conf.name)
-      .reduce((acc, conf) => {
-        const key = conf.abbreviation || conf.name;
-        if (!acc.find(c => c === key)) {
-          acc.push(key);
-        }
-        return acc;
-      }, [] as string[])
-      .sort();
-    return conferences;
-  }, [papers]);
+  const conferences = papers
+    .map(paper => ({
+      name: paper.conference,
+      abbreviation: paper.conference_abbreviation
+    }))
+    .filter((conf) => conf.name) // ✅ Filtrer les null/undefined
+    .reduce((acc, conf) => {
+      const key = conf.abbreviation || conf.name;
+      if (key && !acc.find(c => c === key)) { // ✅ Vérifier que key existe
+        acc.push(key);
+      }
+      return acc;
+    }, [] as string[])
+    .sort();
+  return conferences;
+}, [papers]);
 
   // Gestionnaires d'événements
   const handlePaperClick = (paper: PaperData) => {

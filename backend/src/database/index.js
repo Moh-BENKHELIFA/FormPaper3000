@@ -173,47 +173,78 @@ class PaperDatabase {
   }
 
   /**
-   * Obtenir des statistiques sur la base de données
-   * @returns {Promise<Object>} - Statistiques
-   */
-  async getStats() {
-    try {
-      console.log('📊 Calcul des statistiques en cours...');
-      
-      const papers = await this.papers.getAll();
-      const categories = await this.categories.getAll();
-      
-      console.log(`📄 ${papers.length} papers trouvés`);
-      console.log(`🏷️ ${categories.length} catégories trouvées`);
-      
-      // Compter les papers par statut de lecture
-      const readPapers = papers.filter(p => p.reading_status === 'lu').length;
-      const inProgressPapers = papers.filter(p => p.reading_status === 'en_cours').length;
-      const unreadPapers = papers.filter(p => p.reading_status === 'non_lu').length;
-      
-      const stats = {
-        totalPapers: papers.length,
-        readPapers: readPapers,
-        inProgressPapers: inProgressPapers,
-        unreadPapers: unreadPapers,
-        totalCategories: categories.length
-      };
-
-      console.log('📈 Statistiques détaillées:');
-      console.log(`  - Total papers: ${stats.totalPapers}`);
-      console.log(`  - Papers lus: ${stats.readPapers}`);
-      console.log(`  - Papers en cours: ${stats.inProgressPapers}`);
-      console.log(`  - Papers non lus: ${stats.unreadPapers}`);
-      console.log(`  - Total catégories: ${stats.totalCategories}`);
-      
-      return stats;
-      
-    } catch (error) {
-      console.error('❌ Erreur détaillée lors du calcul des stats:', error);
-      console.error('❌ Stack trace:', error.stack);
-      throw error;
+ * Obtenir des statistiques sur la base de données - VERSION CORRIGÉE
+ * @returns {Promise<Object>} - Statistiques
+ */
+async getStats() {
+  try {
+    console.log('📊 Calcul des statistiques en cours...');
+    
+    // Vérifier la connexion DB
+    if (!this.isConnected) {
+      console.log('⚠️ Base non connectée, tentative de connexion...');
+      await this.connect();
     }
+    
+    // Tenter de récupérer les papers et catégories avec gestion d'erreur
+    let papers = [];
+    let categories = [];
+    
+    try {
+      papers = await this.papers.getAll();
+      console.log(`📄 ${papers.length} papers trouvés`);
+    } catch (paperError) {
+      console.error('❌ Erreur récupération papers:', paperError);
+      papers = []; // Valeur par défaut
+    }
+    
+    try {
+      categories = await this.categories.getAll();
+      console.log(`🏷️ ${categories.length} catégories trouvées`);
+    } catch (categoryError) {
+      console.error('❌ Erreur récupération catégories:', categoryError);
+      categories = []; // Valeur par défaut
+    }
+    
+    // Compter les papers par statut de lecture avec vérification des valeurs
+    const readPapers = papers.filter(p => p && p.reading_status === 'lu').length;
+    const inProgressPapers = papers.filter(p => p && p.reading_status === 'en_cours').length;
+    const unreadPapers = papers.filter(p => p && p.reading_status === 'non_lu').length;
+    
+    const stats = {
+      totalPapers: papers.length || 0,
+      readPapers: readPapers || 0,
+      inProgressPapers: inProgressPapers || 0,
+      unreadPapers: unreadPapers || 0,
+      totalCategories: categories.length || 0
+    };
+
+    console.log('📈 Statistiques détaillées:');
+    console.log(`  - Total papers: ${stats.totalPapers}`);
+    console.log(`  - Papers lus: ${stats.readPapers}`);
+    console.log(`  - Papers en cours: ${stats.inProgressPapers}`);
+    console.log(`  - Papers non lus: ${stats.unreadPapers}`);
+    console.log(`  - Total catégories: ${stats.totalCategories}`);
+    
+    return stats;
+    
+  } catch (error) {
+    console.error('❌ Erreur détaillée lors du calcul des stats:', error);
+    console.error('❌ Stack trace:', error.stack);
+    
+    // Retourner des stats par défaut en cas d'erreur
+    const defaultStats = {
+      totalPapers: 0,
+      readPapers: 0,
+      inProgressPapers: 0,
+      unreadPapers: 0,
+      totalCategories: 0
+    };
+    
+    console.log('⚠️ Retour de statistiques par défaut suite à une erreur');
+    return defaultStats;
   }
+}
 
   /**
    * Grouper les papers par année (méthode utilitaire)

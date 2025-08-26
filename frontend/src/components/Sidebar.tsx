@@ -24,6 +24,8 @@ const Sidebar: React.FC<SidebarProps> = ({ activeItem = 'home', onItemSelect, on
     totalCategories: 0
   });
   const [loadingStats, setLoadingStats] = useState(true);
+  const [connectionError, setConnectionError] = useState(false);
+  const [retryCount, setRetryCount] = useState(0);
 
   const menuItems = [
     { id: 'home', label: 'Home', icon: '🏠' },
@@ -34,19 +36,53 @@ const Sidebar: React.FC<SidebarProps> = ({ activeItem = 'home', onItemSelect, on
   useEffect(() => {
     loadStats();
     // Recharger les stats toutes les 30 secondes
-    const interval = setInterval(loadStats, 30000);
+    const interval = setInterval(() => {
+      if (!loadingStats) {
+        loadStats();
+      }
+    }, 30000);
+    
     return () => clearInterval(interval);
   }, []);
 
   const loadStats = async () => {
     try {
+      setLoadingStats(true);
+      setConnectionError(false);
+      
+      // Test de connexion d'abord
+      console.log('🔄 Test de connexion au serveur...');
+      const isConnected = await paperService.testConnection();
+      
+      if (!isConnected) {
+        console.warn('⚠️ Serveur non accessible');
+        setConnectionError(true);
+        return;
+      }
+
+      console.log('✅ Connexion OK, récupération des stats...');
       const statsData = await paperService.getStats();
+      
+      console.log('📊 Statistiques reçues:', statsData);
       setStats(statsData);
+      setRetryCount(0);
+      
     } catch (error) {
-      console.error('Erreur lors du chargement des statistiques:', error);
+      console.error('❌ Erreur lors du chargement des statistiques:', error);
+      setConnectionError(true);
+      setRetryCount(prev => prev + 1);
+      
+      // Garder les anciennes stats en cas d'erreur
+      console.log('⚠️ Conservation des statistiques existantes');
+      
     } finally {
       setLoadingStats(false);
     }
+  };
+
+  const handleRetryStats = () => {
+    console.log('🔄 Nouvelle tentative de récupération des stats...');
+    loadStats();
   };
 
   const handleItemClick = (itemId: string) => {
@@ -55,6 +91,106 @@ const Sidebar: React.FC<SidebarProps> = ({ activeItem = 'home', onItemSelect, on
     } else {
       onItemSelect?.(itemId);
     }
+  };
+
+  const renderStatsSection = () => {
+    if (loadingStats && stats.totalPapers === 0) {
+      return (
+        <div className="animate-pulse space-y-3">
+          <div className="h-4 bg-gray-300 rounded w-3/4"></div>
+          <div className="h-3 bg-gray-300 rounded w-1/2"></div>
+          <div className="h-3 bg-gray-300 rounded w-2/3"></div>
+          <div className="h-3 bg-gray-300 rounded w-1/2"></div>
+        </div>
+      );
+    }
+
+    if (connectionError && stats.totalPapers === 0) {
+      return (
+        <div className="space-y-3">
+          <div className="text-red-600 text-sm flex items-center">
+            <span className="mr-2">⚠️</span>
+            <span>Connexion impossible</span>
+          </div>
+          <button
+            onClick={handleRetryStats}
+            className="text-xs bg-red-100 text-red-700 px-2 py-1 rounded hover:bg-red-200 transition-colors"
+            disabled={loadingStats}
+          >
+            {loadingStats ? 'Connexion...' : 'Réessayer'}
+          </button>
+          <div className="text-xs text-gray-500">
+            Tentatives: {retryCount}
+          </div>
+        </div>
+      );
+    }
+
+    return (
+      <div className="space-y-3">
+        {connectionError && (
+          <div className="text-orange-600 text-xs flex items-center mb-2">
+            <span className="mr-1">⚠️</span>
+            <span>Données en cache</span>
+          </div>
+        )}
+        
+        <div className="flex items-center justify-between">
+          <span className="text-sm text-gray-600">Total Papers</span>
+          <span className="font-bold text-blue-600">{stats.totalPapers}</span>
+        </div>
+        
+        <div className="flex items-center justify-between">
+          <span className="text-sm text-gray-600">Lus</span>
+          <span className="font-medium text-green-600">{stats.readPapers}</span>
+        </div>
+        
+        <div className="flex items-center justify-between">
+          <span className="text-sm text-gray-600">En cours</span>
+          <span className="font-medium text-yellow-600">{stats.inProgressPapers}</span>
+        </div>
+        
+        <div className="flex items-center justify-between">
+          <span className="text-sm text-gray-600">Non lus</span>
+          <span className="font-medium text-gray-600">{stats.unreadPapers}</span>
+        </div>
+        
+        <div className="flex items-center justify-between">
+          <span className="text-sm text-gray-600">Catégories</span>
+          <span className="font-medium text-purple-600">{stats.totalCategories}</span>
+        </div>
+
+        {/* Barre de progression */}
+        {stats.totalPapers > 0 && (
+          <div className="mt-4">
+            <div className="text-xs text-gray-500 mb-1">Progression de lecture</div>
+            <div className="w-full bg-gray-200 rounded-full h-2">
+              <div 
+                className="bg-green-600 h-2 rounded-full transition-all duration-300"
+                style={{ 
+                  width: `${Math.round((stats.readPapers / stats.totalPapers) * 100)}%` 
+                }}
+              ></div>
+            </div>
+            <div className="text-xs text-gray-500 mt-1">
+              {Math.round((stats.readPapers / stats.totalPapers) * 100)}% complété
+            </div>
+          </div>
+        )}
+
+        {/* Bouton de rafraîchissement */}
+        <button
+          onClick={handleRetryStats}
+          disabled={loadingStats}
+          className="text-xs text-gray-500 hover:text-gray-700 transition-colors flex items-center mt-3"
+        >
+          <span className={`mr-1 ${loadingStats ? 'animate-spin' : ''}`}>
+            🔄
+          </span>
+          {loadingStats ? 'Mise à jour...' : 'Actualiser'}
+        </button>
+      </div>
+    );
   };
 
   return (
@@ -89,97 +225,29 @@ const Sidebar: React.FC<SidebarProps> = ({ activeItem = 'home', onItemSelect, on
           Statistiques
         </h3>
         
-        {loadingStats ? (
-          <div className="animate-pulse space-y-2">
-            <div className="h-4 bg-gray-300 rounded"></div>
-            <div className="h-4 bg-gray-300 rounded"></div>
-            <div className="h-4 bg-gray-300 rounded"></div>
-          </div>
-        ) : (
-          <div className="space-y-3 text-sm">
-            {/* Total d'articles */}
-            <div className="flex justify-between items-center">
-              <span className="text-gray-600">Total articles:</span>
-              <span className="font-medium text-gray-900 bg-blue-100 px-2 py-1 rounded-full">
-                {stats.totalPapers}
-              </span>
-            </div>
-            
-            {/* Articles non lus */}
-            <div className="flex justify-between items-center">
-              <span className="text-gray-600 flex items-center">
-                <span className="mr-1">📄</span>
-                Non lus:
-              </span>
-              <span className="font-medium text-red-600 bg-red-100 px-2 py-1 rounded-full">
-                {stats.unreadPapers}
-              </span>
-            </div>
-            
-            {/* Articles en cours */}
-            <div className="flex justify-between items-center">
-              <span className="text-gray-600 flex items-center">
-                <span className="mr-1">📖</span>
-                En cours:
-              </span>
-              <span className="font-medium text-yellow-600 bg-yellow-100 px-2 py-1 rounded-full">
-                {stats.inProgressPapers}
-              </span>
-            </div>
-            
-            {/* Articles lus */}
-            <div className="flex justify-between items-center">
-              <span className="text-gray-600 flex items-center">
-                <span className="mr-1">✅</span>
-                Lus:
-              </span>
-              <span className="font-medium text-green-600 bg-green-100 px-2 py-1 rounded-full">
-                {stats.readPapers}
-              </span>
-            </div>
-            
-            {/* Catégories */}
-            <div className="flex justify-between items-center">
-              <span className="text-gray-600 flex items-center">
-                <span className="mr-1">🏷️</span>
-                Catégories:
-              </span>
-              <span className="font-medium text-purple-600 bg-purple-100 px-2 py-1 rounded-full">
-                {stats.totalCategories}
-              </span>
-            </div>
-            
-            {/* Barre de progression de lecture */}
-            {stats.totalPapers > 0 && (
-              <div className="mt-4 pt-3 border-t border-gray-200">
-                <div className="flex justify-between text-xs text-gray-500 mb-1">
-                  <span>Progression de lecture</span>
-                  <span>{Math.round((stats.readPapers / stats.totalPapers) * 100)}%</span>
-                </div>
-                <div className="w-full bg-gray-200 rounded-full h-2">
-                  <div 
-                    className="bg-gradient-to-r from-green-400 to-green-600 h-2 rounded-full transition-all duration-300"
-                    style={{ width: `${(stats.readPapers / stats.totalPapers) * 100}%` }}
-                  ></div>
-                </div>
-                <div className="flex justify-between text-xs text-gray-500 mt-1">
-                  <span>{stats.readPapers} lus</span>
-                  <span>{stats.totalPapers - stats.readPapers} restants</span>
-                </div>
-              </div>
-            )}
-          </div>
-        )}
+        {renderStatsSection()}
+      </div>
+
+      {/* Section statut de connexion */}
+      <div className="border-t border-gray-200 mt-6 p-4">
+        <h3 className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-3">
+          Statut
+        </h3>
         
-        {/* Bouton de rafraîchissement */}
-        <button
-          onClick={loadStats}
-          disabled={loadingStats}
-          className="mt-4 w-full px-3 py-2 text-xs bg-gray-200 text-gray-600 rounded-lg hover:bg-gray-300 transition-colors disabled:opacity-50"
-          title="Actualiser les statistiques"
-        >
-          {loadingStats ? '🔄 Actualisation...' : '🔄 Actualiser'}
-        </button>
+        <div className="space-y-2">
+          <div className="flex items-center space-x-2">
+            <div className={`w-2 h-2 rounded-full ${
+              connectionError ? 'bg-red-500' : loadingStats ? 'bg-yellow-500' : 'bg-green-500'
+            }`}></div>
+            <span className="text-xs text-gray-600">
+              {connectionError ? 'Hors ligne' : loadingStats ? 'Synchronisation...' : 'En ligne'}
+            </span>
+          </div>
+          
+          <div className="text-xs text-gray-400">
+            Dernière MAJ: {new Date().toLocaleTimeString()}
+          </div>
+        </div>
       </div>
     </aside>
   );

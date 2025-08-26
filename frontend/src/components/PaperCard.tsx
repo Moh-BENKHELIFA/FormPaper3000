@@ -1,5 +1,5 @@
 import React from 'react';
-import type { PaperData } from '../services/paperService';
+import type { PaperData } from '../types/Paper';
 
 interface PaperCardProps {
   paper: PaperData;
@@ -143,7 +143,8 @@ const PaperCard: React.FC<PaperCardProps> = ({
         {/* Conférence et Date */}
         <div className="flex items-center justify-between text-xs text-gray-500 mb-3">
           {(paper.conference_abbreviation || paper.conference) && (
-            <span className="bg-orange-100 text-orange-800 px-2 py-1 rounded truncate max-w-[60%]" title={paper.conference}>
+            <span className="bg-orange-100 text-orange-800 px-2 py-1 rounded truncate max-w-[60%]" title={(paper.conference || paper.conference_abbreviation) ?? undefined}
+>
               {paper.conference_abbreviation || paper.conference}
             </span>
           )}

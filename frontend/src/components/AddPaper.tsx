@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { paperService } from '../services/paperService';
 import { useToast } from '../contexts/ToastContext';
-import type { PaperData, Category } from '../services/paperService';
+import type { PaperData, Category } from '../types/Paper';
 
 interface AddPaperProps {
   onClose?: () => void;
@@ -54,18 +54,44 @@ const AddPaper: React.FC<AddPaperProps> = ({ onClose, onSave }) => {
   };
 
   // Fonction pour extraire le DOI depuis une URL
-  const extractDoiFromUrl = (url: string): string => {
-    return paperService.extractDoiFromUrl(url);
-  };
+const extractDoiFromUrl = (url: string): string => {
+  try {
+    const doiPatterns = [
+      /doi\.org\/(.+?)(?:\?|$)/,
+      /dx\.doi\.org\/(.+?)(?:\?|$)/,
+      /doi\/pdf\/(.+?)(?:\?|$)/,
+      /doi\/abs\/(.+?)(?:\?|$)/,
+      /\/([0-9]{2}\.[0-9]{4,}\/[-._;()\/:a-zA-Z0-9]+)/
+    ];
+
+    for (const pattern of doiPatterns) {
+      const match = url.match(pattern);
+      if (match && match[1]) {
+        return match[1];
+      }
+    }
+    
+    const doiPattern = /^10\.[0-9]{4,}\/[-._;()\/:a-zA-Z0-9]+$/;
+    if (doiPattern.test(url)) {
+      return url;
+    }
+    
+    return '';
+  } catch (error) {
+    console.error('Erreur lors de l\'extraction du DOI:', error);
+    return '';
+  }
+};
 
   // Récupération des métadonnées via DOI
   const fetchMetadataFromDoi = async (doi: string): Promise<PaperData> => {
-    try {
-      return await paperService.fetchMetadataFromDoi(doi);
-    } catch (error) {
-      throw error;
-    }
-  };
+  try {
+    const response = await paperService.getMetadataFromDOI(doi);
+    return response.paperData;
+  } catch (error) {
+    throw error;
+  }
+};
 
   // Extraction des images depuis un PDF
   const extractImagesFromPdf = async (file: File): Promise<any[]> => {
@@ -92,8 +118,19 @@ const AddPaper: React.FC<AddPaperProps> = ({ onClose, onSave }) => {
 
   const extractMetadataFromPdf = async (file: File): Promise<PaperData> => {
     try {
-      return await paperService.extractMetadataFromPdf(file);
+      console.log('📄 Extraction métadonnées du PDF:', file.name);
+      
+      // ✅ Utiliser extractDataFromPDF qui retourne { paperData: ... }
+      const response = await paperService.extractDataFromPDF(file);
+      
+      // ✅ Le service retourne { paperData: PaperData }
+      const metadata = response.paperData;
+      
+      console.log('✅ Métadonnées extraites:', metadata);
+      return metadata;
+      
     } catch (error) {
+      console.error('❌ Erreur extraction PDF:', error);
       throw error;
     }
   };

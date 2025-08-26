@@ -39,14 +39,28 @@ const upload = multer({
 });
 
 // Initialisation de la base de données au démarrage
+// Initialisation de la base de données au démarrage
 async function initializeApp() {
   try {
     console.log('🔗 Connexion à la base de données...');
     await paperDB.connect();
+    
+    // ❌ NE PAS APPELER paperDB.initialize() car cela ferme la DB !
+    // await paperDB.initialize(); // <-- ENLEVER CETTE LIGNE
+    
     console.log('✅ Base de données connectée avec succès');
+    
+    // Test de santé initial
+    try {
+      const testStats = await paperDB.getStats();
+      console.log('🧪 Test stats initial réussi:', testStats);
+    } catch (testError) {
+      console.warn('⚠️ Warning test stats initial:', testError.message);
+    }
+    
   } catch (error) {
     console.error('❌ Erreur lors de l\'initialisation de la base:', error);
-    process.exit(1);
+    throw error;
   }
 }
 
@@ -97,7 +111,7 @@ async function extractImagesFromPdf(pdfPath, outputFolder) {
 
     pythonProcess.on('error', (error) => {
       console.error('Erreur lors de l\'extraction des images:', error.message);
-      reject(error);
+      resolve([]);
     });
   });
 }
@@ -153,14 +167,99 @@ async function extractDoiFromPdf(pdfPath) {
   });
 }
 
-// Route de test de santé
-app.get('/api/health', (req, res) => {
-  res.json({ 
-    status: 'OK', 
-    message: 'Backend fonctionnel',
-    database: paperDB.isConnectedToDB() ? 'Connected' : 'Disconnected'
-  });
+// ================================
+// ROUTES - ORDRE CORRECT
+// ================================
+
+// Health check amélioré avec vérification DB
+app.get('/api/health', async (req, res) => {
+  try {
+    const health = {
+      status: 'ok',
+      timestamp: new Date().toISOString(),
+      database: {
+        connected: false,
+        stats: null,
+        error: null
+      }
+    };
+
+    // Test de connexion à la base
+    try {
+      health.database.connected = paperDB.isConnectedToDB();
+      
+      if (!health.database.connected) {
+        console.log('🔄 Tentative de reconnexion à la base...');
+        await paperDB.connect();
+        health.database.connected = true;
+      }
+      
+      // Test simple des stats
+      const testStats = await paperDB.getStats();
+      health.database.stats = testStats;
+      
+    } catch (dbError) {
+      console.error('❌ Erreur health check DB:', dbError);
+      health.database.error = dbError.message;
+      health.status = 'warning';
+    }
+
+    const statusCode = health.status === 'ok' ? 200 : 206;
+    res.status(statusCode).json(health);
+    
+  } catch (error) {
+    console.error('❌ Erreur health check général:', error);
+    res.status(500).json({
+      status: 'error',
+      message: error.message,
+      timestamp: new Date().toISOString()
+    });
+  }
 });
+
+// Endpoint de diagnostic avancé 
+app.get('/api/diagnostic', async (req, res) => {
+  try {
+    const diagnostic = {
+      server: {
+        uptime: process.uptime(),
+        memory: process.memoryUsage(),
+        version: process.version
+      },
+      database: {
+        connected: paperDB.isConnectedToDB(),
+        canQuery: false,
+        tablesExist: false
+      }
+    };
+
+    // Test de requête simple
+    try {
+      const db = require('./src/database/database').getDatabase();
+      const result = await new Promise((resolve, reject) => {
+        db.get("SELECT name FROM sqlite_master WHERE type='table' AND name='Papers'", (err, row) => {
+          if (err) reject(err);
+          else resolve(row);
+        });
+      });
+      
+      diagnostic.database.canQuery = true;
+      diagnostic.database.tablesExist = !!result;
+      
+    } catch (queryError) {
+      diagnostic.database.error = queryError.message;
+    }
+
+    res.json(diagnostic);
+    
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ================================
+// ROUTES PAPERS - SPÉCIFIQUES D'ABORD
+// ================================
 
 // Récupérer les métadonnées depuis un DOI
 app.post('/api/papers/metadata-from-doi', async (req, res) => {
@@ -171,58 +270,45 @@ app.post('/api/papers/metadata-from-doi', async (req, res) => {
       return res.status(400).json({ error: 'DOI requis' });
     }
 
-    console.log(`Récupération des métadonnées pour DOI: ${doi}`);
+    console.log(`🔍 Récupération des métadonnées pour DOI: ${doi}`);
 
-    const crossrefUrl = `https://api.crossref.org/works/${doi}`;
-    
-    const response = await axios.get(crossrefUrl, {
+    const response = await axios.get(`https://api.crossref.org/works/${doi}`, {
       headers: {
-        'Accept': 'application/json'
-      },
-      timeout: 10000
+        'User-Agent': 'FormPaper3000/1.0 (https://github.com/yourrepo/formpaper3000; mailto:your-email@example.com)'
+      }
     });
 
     const work = response.data.message;
     
-    const authors = work.author 
-      ? work.author.map(a => `${a.given || ''} ${a.family || ''}`.trim())
-      : ['Auteur inconnu'];
-
-    const metadata = {
-      title: work.title ? work.title[0] : 'Titre non disponible',
-      authors: authors.join(', '),
+    const paperData = {
+      title: work.title?.[0] || '',
+      authors: work.author?.map(a => `${a.given || ''} ${a.family || ''}`).join(', ') || '',
       doi: work.DOI || doi,
-      conference: work['container-title'] ? work['container-title'][0] : '',
-      publication_date: work.published 
-        ? `${work.published['date-parts'][0][0]}-${String(work.published['date-parts'][0][1] || 1).padStart(2, '0')}-${String(work.published['date-parts'][0][2] || 1).padStart(2, '0')}`
-        : new Date().toISOString().split('T')[0],
-      url: work.URL || `https://doi.org/${doi}`
+      url: work.URL || `https://doi.org/${doi}`,
+      publication_date: work.published?.['date-parts']?.[0] ? 
+        `${work.published['date-parts'][0][0]}-${String(work.published['date-parts'][0][1] || 1).padStart(2, '0')}-${String(work.published['date-parts'][0][2] || 1).padStart(2, '0')}` : 
+        new Date().toISOString().split('T')[0],
+      conference: work['container-title']?.[0] || '',
+      reading_status: 'non_lu'
     };
 
-    console.log('Métadonnées récupérées:', metadata);
-    res.json(metadata);
+    console.log(`✅ Métadonnées récupérées: ${paperData.title}`);
+    res.json({ paperData });
 
   } catch (error) {
-    console.error('Erreur lors de la récupération DOI:', error.message);
+    console.error('❌ Erreur lors de la récupération des métadonnées:', error.message);
     
     if (error.response?.status === 404) {
-      return res.status(404).json({ 
+      res.status(404).json({ 
         error: 'DOI non trouvé',
-        message: 'Le DOI spécifié n\'existe pas dans la base Crossref'
+        message: 'Ce DOI n\'existe pas dans la base Crossref'
+      });
+    } else {
+      res.status(500).json({ 
+        error: 'Erreur lors de la récupération des métadonnées',
+        message: error.message
       });
     }
-    
-    if (error.code === 'ECONNABORTED') {
-      return res.status(408).json({ 
-        error: 'Timeout',
-        message: 'La requête a expiré. Vérifiez votre connexion internet.'
-      });
-    }
-
-    res.status(500).json({ 
-      error: 'Erreur lors de la récupération des métadonnées',
-      message: error.message
-    });
   }
 });
 
@@ -233,63 +319,83 @@ app.post('/api/papers/extract-images', upload.single('pdf'), async (req, res) =>
       return res.status(400).json({ error: 'Fichier PDF requis' });
     }
 
-    console.log(`Extraction des images du PDF: ${req.file.filename}`);
+    const pdfPath = req.file.path;
+    const outputFolder = path.join('uploads', 'extracted_images', Date.now().toString());
 
-    const imageFolder = path.join('uploads', 'images', `pdf_${Date.now()}`);
-    
-    const extractedImages = await extractImagesFromPdf(req.file.path, imageFolder);
-    
-    fs.unlinkSync(req.file.path);
+    if (!fs.existsSync(outputFolder)) {
+      fs.mkdirSync(outputFolder, { recursive: true });
+    }
 
-    const imagesForFrontend = extractedImages.map(img => ({
-      ...img,
-      url: `http://localhost:${PORT}/${img.path.replace(/\\/g, '/')}`
+    console.log(`📄 Extraction des images du PDF: ${req.file.originalname}`);
+    
+    const extractedImages = await extractImagesFromPdf(pdfPath, outputFolder);
+    
+    // Nettoyer le fichier PDF temporaire
+    fs.unlinkSync(pdfPath);
+
+    const images = extractedImages.map(img => ({
+      name: img.name,
+      url: `http://localhost:${PORT}/${img.path}`,
+      page: img.page
     }));
 
-    console.log(`Images extraites et converties:`, imagesForFrontend);
-    res.json({ images: imagesForFrontend });
+    console.log(`🖼️ ${images.length} images extraites`);
+    res.json({ images });
 
   } catch (error) {
-    console.error('Erreur lors de l\'extraction des images:', error.message);
+    console.error('❌ Erreur lors de l\'extraction des images:', error.message);
     
     if (req.file && fs.existsSync(req.file.path)) {
       fs.unlinkSync(req.file.path);
     }
 
     res.status(500).json({ 
-      error: 'Erreur lors de l\'extraction des images du PDF',
+      error: 'Erreur lors de l\'extraction des images',
       message: error.message
     });
   }
 });
 
-// Extraire les métadonnées depuis un PDF
+// Route extract-from-pdf corrigée - Remplacez votre route actuelle par celle-ci
 app.post('/api/papers/extract-from-pdf', upload.single('pdf'), async (req, res) => {
   try {
     if (!req.file) {
       return res.status(400).json({ error: 'Fichier PDF requis' });
     }
 
-    console.log(`Extraction des métadonnées du PDF: ${req.file.filename}`);
-
+    console.log(`📄 Extraction des métadonnées du PDF: ${req.file.originalname}`);
+    
     const doi = await extractDoiFromPdf(req.file.path);
     
     if (!doi) {
+      // Pas de DOI trouvé - créer des données de base
+      const fallbackData = {
+        title: path.parse(req.file.originalname).name,
+        authors: '',
+        doi: '',
+        conference: '',
+        publication_date: new Date().toISOString().split('T')[0],
+        url: '',
+        reading_status: 'non_lu'
+      };
+      
       fs.unlinkSync(req.file.path);
-      return res.status(404).json({ 
-        error: 'DOI non trouvé dans le PDF',
-        message: 'Aucun DOI n\'a pu être extrait de ce fichier PDF'
-      });
+      console.log('📝 Aucun DOI trouvé - métadonnées de base:', fallbackData);
+      
+      // ✅ Format compatible avec paperService.extractDataFromPDF()
+      return res.json({ paperData: fallbackData });
     }
 
-    console.log(`DOI extrait du PDF: ${doi}`);
+    console.log(`🔍 DOI extrait du PDF: ${doi}`);
 
     try {
+      // Récupérer les métadonnées via Crossref
       const crossrefUrl = `https://api.crossref.org/works/${doi}`;
       
       const response = await axios.get(crossrefUrl, {
         headers: {
-          'Accept': 'application/json'
+          'Accept': 'application/json',
+          'User-Agent': 'PaperManager/1.0 (mailto:user@example.com)'
         },
         timeout: 10000
       });
@@ -297,44 +403,54 @@ app.post('/api/papers/extract-from-pdf', upload.single('pdf'), async (req, res) 
       const work = response.data.message;
       
       const authors = work.author 
-        ? work.author.map(a => `${a.given || ''} ${a.family || ''}`.trim())
-        : ['Auteur inconnu'];
+        ? work.author.map(a => `${a.given || ''} ${a.family || ''}`.trim()).filter(a => a)
+        : [];
 
-      const metadata = {
-        title: work.title ? work.title[0] : 'Titre non disponible',
-        authors: authors.join(', '),
+      const paperData = {
+        title: work.title ? work.title[0] : path.parse(req.file.originalname).name,
+        authors: authors.length > 0 ? authors.join(', ') : '',
         doi: work.DOI || doi,
         conference: work['container-title'] ? work['container-title'][0] : '',
         publication_date: work.published 
           ? `${work.published['date-parts'][0][0]}-${String(work.published['date-parts'][0][1] || 1).padStart(2, '0')}-${String(work.published['date-parts'][0][2] || 1).padStart(2, '0')}`
           : new Date().toISOString().split('T')[0],
-        url: work.URL || `https://doi.org/${doi}`
+        url: work.URL || `https://doi.org/${doi}`,
+        reading_status: 'non_lu'
       };
 
       fs.unlinkSync(req.file.path);
 
-      console.log('Métadonnées récupérées via DOI extrait:', metadata);
-      res.json(metadata);
+      console.log('✅ Métadonnées récupérées via Crossref:', paperData);
+      
+      // ✅ Format compatible avec paperService.extractDataFromPDF()
+      res.json({ paperData });
 
     } catch (crossrefError) {
-      console.error('Erreur Crossref:', crossrefError.message);
+      console.error('⚠️ Erreur Crossref:', crossrefError.message);
       
-      const fallbackMetadata = {
-        title: `Titre extrait de ${req.file.originalname}`,
-        authors: 'Auteurs non trouvés',
+      // Fallback avec le DOI trouvé mais métadonnées minimales
+      const fallbackData = {
+        title: path.parse(req.file.originalname).name,
+        authors: '',
         doi: doi,
-        conference: 'Conférence non trouvée',
+        conference: '',
         publication_date: new Date().toISOString().split('T')[0],
-        url: `https://doi.org/${doi}`
+        url: `https://doi.org/${doi}`,
+        reading_status: 'non_lu'
       };
 
       fs.unlinkSync(req.file.path);
-      res.json(fallbackMetadata);
+      
+      console.log('📝 Métadonnées fallback avec DOI:', fallbackData);
+      
+      // ✅ Format compatible avec paperService.extractDataFromPDF()
+      res.json({ paperData: fallbackData });
     }
 
   } catch (error) {
-    console.error('Erreur lors de l\'extraction PDF:', error.message);
+    console.error('❌ Erreur lors de l\'extraction PDF:', error.message);
     
+    // Nettoyer le fichier temporaire
     if (req.file && fs.existsSync(req.file.path)) {
       fs.unlinkSync(req.file.path);
     }
@@ -346,86 +462,142 @@ app.post('/api/papers/extract-from-pdf', upload.single('pdf'), async (req, res) 
   }
 });
 
-// Sauvegarder un paper dans la base de données
+// Upload d'image
+app.post('/api/papers/upload-image', upload.single('image'), (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ error: 'Fichier image requis' });
+    }
+
+    const imageUrl = `http://localhost:${PORT}/uploads/${req.file.filename}`;
+    
+    console.log(`🖼️ Image uploadée: ${imageUrl}`);
+    res.json({ imageUrl });
+
+  } catch (error) {
+    console.error('❌ Erreur lors de l\'upload:', error.message);
+    res.status(500).json({ 
+      error: 'Erreur lors de l\'upload de l\'image',
+      message: error.message
+    });
+  }
+});
+
+// ✅ STATISTIQUES EN PREMIER (AVANT LES ROUTES GÉNÉRIQUES)
+app.get('/api/papers/stats', async (req, res) => {
+  try {
+    console.log('📊 Récupération des statistiques...');
+    
+    // Vérifier que la base est connectée
+    if (!paperDB.isConnectedToDB()) {
+      console.log('⚠️ Base de données non connectée, tentative de reconnexion...');
+      await paperDB.connect();
+    }
+    
+    const stats = await paperDB.getStats();
+    console.log('📈 Statistiques récupérées:', stats);
+
+    res.json({
+      success: true,
+      stats: stats
+    });
+
+  } catch (error) {
+    console.error('❌ Erreur lors de la récupération des stats:', error);
+    console.error('❌ Stack trace complète:', error.stack);
+    
+    // Retourner des statistiques par défaut en cas d'erreur
+    const defaultStats = {
+      totalPapers: 0,
+      readPapers: 0,
+      inProgressPapers: 0,
+      unreadPapers: 0,
+      totalCategories: 0
+    };
+    
+    res.status(200).json({ 
+      success: true,
+      stats: defaultStats,
+      warning: 'Statistiques par défaut retournées suite à une erreur',
+      error_details: error.message
+    });
+  }
+});
+
+// Récupérer tous les papers
+app.get('/api/papers', async (req, res) => {
+  try {
+    console.log('📖 Récupération de tous les papers...');
+    
+    const papers = await paperDB.papers.getAll();
+    console.log(`📚 ${papers.length} papers récupérés`);
+
+    res.json({
+      success: true,
+      papers: papers,
+      total: papers.length
+    });
+
+  } catch (error) {
+    console.error('❌ Erreur lors de la récupération des papers:', error);
+    res.status(500).json({ 
+      error: 'Erreur lors de la récupération des papers',
+      message: error.message
+    });
+  }
+});
+
+// Sauvegarder un paper dans la base avec catégories
 app.post('/api/papers', upload.single('pdf'), async (req, res) => {
   try {
-    console.log('🔥 Réception d\'une demande de sauvegarde de paper');
-    console.log('Body:', req.body);
-    console.log('File:', req.file ? req.file.originalname : 'Aucun fichier');
-
-    // Extraire les données du formulaire
-    const paperData = {
-      title: req.body.title,
-      authors: req.body.authors,
-      publication_date: req.body.publication_date,
-      conference: req.body.conference || null,
-      conference_abbreviation: req.body.conference_abbreviation || null,
-      reading_status: req.body.reading_status || READING_STATUS.NON_LU,
-      doi: req.body.doi,
-      url: req.body.url,
-      image: req.body.image || null
-    };
-
-    console.log('📋 Données du paper à sauvegarder:', paperData);
-
-    // Validation basique
-    if (!paperData.title || !paperData.authors || !paperData.doi) {
+    console.log('💾 Sauvegarde d\'un nouveau paper...');
+    console.log('Données reçues:', req.body);
+    
+    const paperData = req.body;
+    const categories = req.body.categories ? JSON.parse(req.body.categories) : [];
+    
+    // Validation des données essentielles
+    if (!paperData.title || !paperData.authors || !paperData.doi || !paperData.url) {
       return res.status(400).json({ 
         error: 'Données manquantes',
-        message: 'Titre, auteurs et DOI sont requis'
+        message: 'Titre, auteurs, DOI et URL sont requis'
       });
     }
 
-    // Gérer les catégories si présentes
-    let categories = [];
-    if (req.body.categories) {
-      try {
-        categories = typeof req.body.categories === 'string' 
-          ? JSON.parse(req.body.categories) 
-          : req.body.categories;
-        console.log('🏷️ Catégories reçues:', categories);
-      } catch (error) {
-        console.warn('⚠️ Erreur parsing catégories:', error.message);
-      }
-    }
+    console.log(`📝 Création du paper: ${paperData.title}`);
+    console.log(`🏷️ Catégories: ${categories.join(', ')}`);
 
-    // Préparer les données pour les fichiers
-    let pdfBuffer = null;
-    let pdfName = null;
-    let extractedImages = [];
+    // Préparer les données du paper
+    const paperToSave = {
+      title: paperData.title,
+      authors: paperData.authors,
+      publication_date: paperData.publication_date || new Date().toISOString().split('T')[0],
+      conference: paperData.conference || null,
+      reading_status: paperData.reading_status || 'non_lu',
+      image: paperData.image || null,
+      doi: paperData.doi,
+      url: paperData.url
+    };
 
-    // Si un PDF est fourni
-    if (req.file) {
-      pdfBuffer = fs.readFileSync(req.file.path);
-      pdfName = req.file.originalname;
-      console.log(`📄 PDF détecté: ${pdfName} (${pdfBuffer.length} bytes)`);
-      
-      // Nettoyer le fichier temporaire
+    // Buffer et nom du PDF si fourni
+    const pdfBuffer = req.file ? fs.readFileSync(req.file.path) : null;
+    const pdfName = req.file ? req.file.originalname : null;
+
+    // Créer le paper complet avec catégories
+    const savedPaper = await paperDB.createCompletePaper(
+      paperToSave,
+      pdfBuffer,
+      pdfName,
+      [], // extractedImages
+      categories // categoryIds
+    );
+
+    // Nettoyer le fichier temporaire
+    if (req.file && fs.existsSync(req.file.path)) {
       fs.unlinkSync(req.file.path);
     }
 
-    // Traiter les images extraites si présentes
-    if (req.body.extractedImages) {
-      try {
-        extractedImages = JSON.parse(req.body.extractedImages);
-        console.log(`🖼️ ${extractedImages.length} images extraites à traiter`);
-      } catch (error) {
-        console.warn('⚠️ Erreur parsing images extraites:', error.message);
-      }
-    }
-
-    // Sauvegarder dans la base de données avec catégories
-    console.log('💾 Sauvegarde en cours...');
-    const savedPaper = await paperDB.createCompletePaper(
-      paperData,
-      pdfBuffer,
-      pdfName,
-      extractedImages,
-      categories, // Passer les catégories
-      null // Description (pour l'instant null)
-    );
-
-    console.log(`✅ Paper sauvegardé avec succès! ID: ${savedPaper.id}`);
+    console.log(`✅ Paper sauvegardé avec ID: ${savedPaper.id}`);
 
     // Statistiques
     const stats = await paperDB.getStats();
@@ -462,28 +634,7 @@ app.post('/api/papers', upload.single('pdf'), async (req, res) => {
   }
 });
 
-// Récupérer tous les papers
-app.get('/api/papers', async (req, res) => {
-  try {
-    console.log('📖 Récupération de tous les papers...');
-    
-    const papers = await paperDB.papers.getAll();
-    console.log(`📚 ${papers.length} papers récupérés`);
-
-    res.json({
-      success: true,
-      papers: papers,
-      total: papers.length
-    });
-
-  } catch (error) {
-    console.error('❌ Erreur lors de la récupération des papers:', error);
-    res.status(500).json({ 
-      error: 'Erreur lors de la récupération des papers',
-      message: error.message
-    });
-  }
-});
+// ✅ ROUTES AVEC PARAMÈTRES EN DERNIER
 
 // Récupérer un paper par ID avec détails
 app.get('/api/papers/:id', async (req, res) => {
@@ -520,31 +671,22 @@ app.get('/api/papers/:id', async (req, res) => {
   }
 });
 
-// Mise à jour d'un paper avec catégories
+// Mettre à jour un paper avec catégories
 app.put('/api/papers/:id', async (req, res) => {
   try {
     const paperId = parseInt(req.params.id);
+    const updates = req.body;
+    const categories = updates.categories || [];
     
     if (isNaN(paperId)) {
       return res.status(400).json({ error: 'ID invalide' });
     }
 
-    console.log(`🔄 Mise à jour du paper ID: ${paperId}`);
-    console.log('Données à mettre à jour:', req.body);
-    
-    // Séparer les catégories des autres données
-    const { categories, ...paperUpdates } = req.body;
-    
-    // Mettre à jour les données du paper
-    const updated = await paperDB.papers.update(paperId, paperUpdates);
-    
-    // Gérer les catégories si présentes
-    if (categories && Array.isArray(categories)) {
-      await paperDB.paperCategories.setPaperCategories(paperId, categories);
-    }
-    
-    // Récupérer le paper mis à jour avec détails
-    const updatedPaper = await paperDB.papers.getByIdWithDetails(paperId);
+    console.log(`✏️ Mise à jour du paper ID: ${paperId}`);
+    console.log('Données de mise à jour:', updates);
+
+    // Mettre à jour le paper
+    const updatedPaper = await paperDB.papers.update(paperId, updates);
     
     if (!updatedPaper) {
       return res.status(404).json({ 
@@ -553,10 +695,18 @@ app.put('/api/papers/:id', async (req, res) => {
       });
     }
 
+    // Mettre à jour les catégories si fournies
+    if (categories.length >= 0) {
+      await paperDB.paperCategories.setPaperCategories(paperId, categories);
+    }
+
+    // Récupérer le paper mis à jour avec détails
+    const paperWithDetails = await paperDB.papers.getByIdWithDetails(paperId);
+
     console.log(`✅ Paper ${paperId} mis à jour avec succès`);
     res.json({
       success: true,
-      paper: updatedPaper,
+      paper: paperWithDetails,
       message: 'Paper mis à jour avec succès'
     });
 
@@ -604,32 +754,20 @@ app.delete('/api/papers/:id', async (req, res) => {
   }
 });
 
-// Statistiques de la base
-app.get('/api/papers/stats', async (req, res) => {
-  try {
-    console.log('📊 Récupération des statistiques...');
-    
-    const stats = await paperDB.getStats();
-    console.log('📈 Statistiques:', stats);
+// ================================
+// ROUTES CATÉGORIES
+// ================================
 
-    res.json({
-      success: true,
-      stats: stats
-    });
-
-  } catch (error) {
-    console.error('❌ Erreur lors de la récupération des stats:', error);
-    res.status(500).json({ 
-      error: 'Erreur lors de la récupération des statistiques',
-      message: error.message
-    });
-  }
-});
-
-// Gestion des catégories - Récupérer toutes les catégories
+// Récupérer toutes les catégories
 app.get('/api/categories', async (req, res) => {
   try {
     console.log('🏷️ Récupération des catégories...');
+    
+    // Vérifier la connexion DB
+    if (!paperDB.isConnectedToDB()) {
+      console.log('⚠️ Base de données non connectée, tentative de reconnexion...');
+      await paperDB.connect();
+    }
     
     const categories = await paperDB.categories.getAll();
     console.log(`📝 ${categories.length} catégories récupérées`);
@@ -724,32 +862,18 @@ app.delete('/api/categories/:id', async (req, res) => {
   }
 });
 
-// Upload d'image (gardé pour compatibilité)
-app.post('/api/papers/upload-image', upload.single('image'), (req, res) => {
-  try {
-    if (!req.file) {
-      return res.status(400).json({ error: 'Fichier image requis' });
-    }
-
-    const imageUrl = `http://localhost:${PORT}/uploads/${req.file.filename}`;
-    
-    console.log(`🖼️ Image uploadée: ${imageUrl}`);
-    res.json({ imageUrl });
-
-  } catch (error) {
-    console.error('❌ Erreur lors de l\'upload:', error.message);
-    res.status(500).json({ 
-      error: 'Erreur lors de l\'upload de l\'image',
-      message: error.message
-    });
-  }
-});
+// ================================
+// FICHIERS STATIQUES
+// ================================
 
 // Servir les fichiers statiques
 app.use('/uploads', express.static('uploads'));
 app.use('/MyPapers', express.static('MyPapers'));
 
-// Route par défaut
+// ================================
+// ROUTE PAR DÉFAUT
+// ================================
+
 app.get('/', (req, res) => {
   res.json({ 
     message: 'API Paper Manager avec SQLite',
@@ -757,22 +881,27 @@ app.get('/', (req, res) => {
     database: paperDB.isConnectedToDB() ? 'Connected' : 'Disconnected',
     endpoints: [
       'GET /api/health',
+      'GET /api/diagnostic',
       'POST /api/papers/metadata-from-doi',
       'POST /api/papers/extract-images',
       'POST /api/papers/extract-from-pdf',
-      'POST /api/papers (Save to database with categories)',
-      'GET /api/papers (Get all papers)',
-      'GET /api/papers/:id (Get paper by ID)',
-      'PUT /api/papers/:id (Update paper with categories)',
-      'DELETE /api/papers/:id (Delete paper)',
-      'GET /api/papers/stats (Get statistics)',
-      'GET /api/categories (Get all categories)',
-      'POST /api/categories (Create category)',
-      'DELETE /api/categories/:id (Delete category)',
-      'POST /api/papers/upload-image (Upload image)'
+      'POST /api/papers/upload-image',
+      'GET /api/papers/stats',
+      'GET /api/papers',
+      'POST /api/papers',
+      'GET /api/papers/:id',
+      'PUT /api/papers/:id',
+      'DELETE /api/papers/:id',
+      'GET /api/categories',
+      'POST /api/categories',
+      'DELETE /api/categories/:id'
     ]
   });
 });
+
+// ================================
+// DÉMARRAGE DU SERVEUR
+// ================================
 
 // Démarrage du serveur avec initialisation de la base
 async function startServer() {
@@ -783,6 +912,7 @@ async function startServer() {
       console.log(`🚀 Serveur démarré sur http://localhost:${PORT}`);
       console.log(`📊 API disponible sur http://localhost:${PORT}/api`);
       console.log(`❤️ Health check: http://localhost:${PORT}/api/health`);
+      console.log(`🔍 Diagnostic: http://localhost:${PORT}/api/diagnostic`);
       console.log(`💾 Base de données SQLite: ${paperDB.isConnectedToDB() ? 'Connectée' : 'Déconnectée'}`);
       console.log(`📈 Statistiques: http://localhost:${PORT}/api/papers/stats`);
       console.log(`🏷️ Catégories: http://localhost:${PORT}/api/categories`);
@@ -792,6 +922,10 @@ async function startServer() {
     process.exit(1);
   }
 }
+
+// ================================
+// GESTION DES ARRÊTS
+// ================================
 
 // Gestion des arrêts propres
 process.on('SIGINT', async () => {
@@ -808,11 +942,33 @@ process.on('SIGINT', async () => {
 
 process.on('uncaughtException', (error) => {
   console.error('❌ Erreur non capturée:', error);
+  console.error('❌ Stack:', error.stack);
 });
 
 process.on('unhandledRejection', (reason, promise) => {
   console.error('❌ Promesse rejetée non gérée:', reason);
+  console.error('❌ Promise:', promise);
 });
 
+// Gestion gracieuse des erreurs lors de l'arrêt
+process.on('SIGTERM', async () => {
+  console.log('🛑 SIGTERM reçu, arrêt gracieux...');
+  try {
+    await paperDB.disconnect();
+    console.log('✅ Arrêt gracieux terminé');
+    process.exit(0);
+  } catch (error) {
+    console.error('❌ Erreur arrêt gracieux:', error);
+    process.exit(1);
+  }
+});
+
+// ================================
+// DÉMARRAGE DE L'APPLICATION
+// ================================
+
 // Démarrer l'application
-startServer();
+startServer().catch((error) => {
+  console.error('❌ Erreur fatale au démarrage:', error);
+  process.exit(1);
+});

@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import type { PaperData } from '../services/paperService';
+import type { PaperData } from '../types/Paper';
 
 export interface FilterOptions {
   searchTerm: string;

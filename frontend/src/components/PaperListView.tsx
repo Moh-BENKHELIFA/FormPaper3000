@@ -1,5 +1,5 @@
 import React from 'react';
-import type { PaperData } from '../services/paperService';
+import type { PaperData } from '../types/Paper';
 
 interface PaperListViewProps {
   papers: PaperData[];
@@ -202,7 +202,7 @@ const PaperListView: React.FC<PaperListViewProps> = ({
                   {(paper.conference_abbreviation || paper.conference) && (
                     <span 
                       className="inline-block bg-orange-100 text-orange-800 text-xs px-2 py-1 rounded truncate max-w-full"
-                      title={paper.conference}
+                      title={(paper.conference || paper.conference_abbreviation) ?? undefined}
                     >
                       {paper.conference_abbreviation || paper.conference}
                     </span>

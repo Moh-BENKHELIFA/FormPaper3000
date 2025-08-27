@@ -1,29 +1,27 @@
 // PaperNotes.tsx
 import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { X, FileText, Calendar, Tag, ExternalLink, Plus } from 'lucide-react';
+import { X, FileText, Calendar, Tag, ExternalLink, Plus, Check, Download } from 'lucide-react';
 import type { Block, BlockType, Position } from '../types/BlockTypes';
-import { SlashCommands } from './commands/SlashCommands';
 import { TextBlock } from './commands/TextBlock';
 import { HeadingBlock } from './commands/HeadingBlock';
 import { ListBlock } from './commands/ListBlock';
 import { ImageBlock } from './commands/ImageBlock';
 
 // Interface pour les props du papier
-interface Paper {
-  id?: string;
+interface PaperInfo {
   title: string;
   date: string;
   tags?: string[];
   image?: string;
   pdfUrl?: string;
-  content?: string;
 }
 
-// Interface pour les props du composant
+// Interface pour les props du composant - incluant initialBlocks
 interface PaperNotesProps {
-  paper: Paper;
+  paper: PaperInfo;
+  initialBlocks?: Block[];  // Propriété optionnelle pour les blocs initiaux
   onClose: () => void;
-  onSave?: (content: Block[]) => void;
+  onSave?: (blocks: Block[]) => void;
 }
 
 // Interface pour les commandes
@@ -35,19 +33,28 @@ interface Command {
   description: string;
 }
 
-const PaperNotes: React.FC<PaperNotesProps> = ({ paper, onClose, onSave }) => {
-  const [blocks, setBlocks] = useState<Block[]>([
-    { 
-      id: '1', 
-      type: 'text', 
-      content: '', 
-      placeholder: "Commencez à écrire ou tapez '/' pour les commandes..." 
-    }
-  ]);
+const PaperNotes: React.FC<PaperNotesProps> = ({ 
+  paper, 
+  initialBlocks, 
+  onClose, 
+  onSave 
+}) => {
+  const [blocks, setBlocks] = useState<Block[]>(
+    initialBlocks && initialBlocks.length > 0 
+      ? initialBlocks
+      : [{ 
+          id: '1', 
+          type: 'text', 
+          content: '', 
+          placeholder: "Commencez à écrire ou tapez '/' pour les commandes..." 
+        }]
+  );
+  
   const [showSlashMenu, setShowSlashMenu] = useState<boolean>(false);
   const [slashMenuPosition, setSlashMenuPosition] = useState<Position>({ top: 0, left: 0 });
   const [activeBlockId, setActiveBlockId] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState<string>('');
+  const [isSaving, setIsSaving] = useState<boolean>(false);
   const menuRef = useRef<HTMLDivElement>(null);
 
   // Commandes disponibles
@@ -80,12 +87,14 @@ const PaperNotes: React.FC<PaperNotesProps> = ({ paper, onClose, onSave }) => {
     const newBlock: Block = {
       id: Date.now().toString(),
       type: commandType,
-      content: commandType === 'image' ? '' : '',
+      content: '',
       placeholder: getPlaceholderForType(commandType)
     };
 
     setBlocks(prevBlocks => {
       const index = prevBlocks.findIndex(b => b.id === activeBlockId);
+      if (index === -1) return prevBlocks;
+      
       const updatedBlocks = [...prevBlocks];
       updatedBlocks[index] = newBlock;
       // Ajouter un nouveau bloc vide après
@@ -160,7 +169,51 @@ const PaperNotes: React.FC<PaperNotesProps> = ({ paper, onClose, onSave }) => {
     });
   }, []);
 
-  // Sauvegarder les notes (optionnel)
+  // Sauvegarder manuellement avec feedback visuel
+  const handleSave = useCallback(() => {
+    if (onSave) {
+      setIsSaving(true);
+      onSave(blocks);
+      // Afficher l'indicateur de sauvegarde pendant 1 seconde
+      setTimeout(() => {
+        setIsSaving(false);
+      }, 1000);
+    }
+  }, [blocks, onSave]);
+
+  // Exporter les notes en JSON
+  const handleExport = useCallback(() => {
+    const exportData = {
+      paper: {
+        title: paper.title,
+        date: paper.date,
+        tags: paper.tags
+      },
+      blocks: blocks,
+      metadata: {
+        blockCount: blocks.length,
+        wordCount: blocks.reduce((acc, block) => {
+          if (block.type !== 'image' && block.content) {
+            return acc + block.content.trim().split(/\s+/).length;
+          }
+          return acc;
+        }, 0),
+        exportDate: new Date().toISOString()
+      }
+    };
+
+    const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `notes-${paper.title.replace(/\s+/g, '-').toLowerCase()}-${new Date().toISOString().split('T')[0]}.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }, [blocks, paper]);
+
+  // Auto-save avec debounce
   useEffect(() => {
     if (onSave) {
       const timer = setTimeout(() => {
@@ -231,11 +284,39 @@ const PaperNotes: React.FC<PaperNotesProps> = ({ paper, onClose, onSave }) => {
           <button
             type="button"
             onClick={onClose}
-            className="absolute top-4 right-4 p-2 bg-white rounded-full shadow-lg hover:shadow-xl transition-shadow"
+            className="absolute top-4 right-4 p-2 bg-white rounded-full shadow-lg hover:shadow-xl transition-shadow z-10"
             aria-label="Fermer"
           >
             <X className="w-5 h-5" />
           </button>
+          
+          {/* Boutons d'action */}
+          <div className="absolute top-4 right-20 flex gap-2 z-10">
+            {/* Bouton Sauvegarder avec indicateur */}
+            <button
+              type="button"
+              onClick={handleSave}
+              className={`p-2 rounded-full shadow-lg transition-all ${
+                isSaving 
+                  ? 'bg-green-600 text-white animate-pulse' 
+                  : 'bg-green-500 text-white hover:bg-green-600'
+              }`}
+              title="Sauvegarder les notes"
+              disabled={isSaving}
+            >
+              <Check className="w-5 h-5" />
+            </button>
+            
+            {/* Bouton Exporter */}
+            <button
+              type="button"
+              onClick={handleExport}
+              className="p-2 bg-blue-500 text-white rounded-full shadow-lg hover:bg-blue-600 transition-colors"
+              title="Exporter les notes"
+            >
+              <Download className="w-5 h-5" />
+            </button>
+          </div>
 
           <div className="absolute bottom-4 left-8 right-8">
             <h1 className="text-3xl font-bold text-gray-900 mb-2">{paper.title}</h1>
@@ -328,6 +409,13 @@ const PaperNotes: React.FC<PaperNotesProps> = ({ paper, onClose, onSave }) => {
               </button>
             ))}
           </div>
+        </div>
+      )}
+
+      {/* Indicateur de sauvegarde automatique */}
+      {isSaving && (
+        <div className="fixed bottom-4 right-4 bg-green-500 text-white px-4 py-2 rounded-lg shadow-lg animate-pulse">
+          Sauvegarde en cours...
         </div>
       )}
     </div>

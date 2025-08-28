@@ -26,7 +26,7 @@ interface PaperFiltersProps {
   onSortChange: (sort: SortOptions) => void;
   viewMode: ViewMode;
   onViewModeChange: (mode: ViewMode) => void;
-  conferences: string[];
+  conferences: { name: string | null | undefined; abbreviation: string | null | undefined }[];
   categories: { id: number; name: string }[];
   totalCount: number;
   filteredCount: number;
@@ -261,9 +261,12 @@ const PaperFilters: React.FC<PaperFiltersProps> = ({
                 className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 focus:border-transparent"
               >
                 <option value="">Toutes les conférences</option>
-                {conferences.map((conference) => (
-                  <option key={conference} value={conference}>
-                    {conference}
+                {conferences.map((conference, idx) => (
+                  <option
+                    key={conference.abbreviation ?? conference.name ?? idx}
+                    value={conference.abbreviation ?? conference.name ?? ''}
+                  >
+                    {conference.name ?? conference.abbreviation ?? 'Unknown'}
                   </option>
                 ))}
               </select>

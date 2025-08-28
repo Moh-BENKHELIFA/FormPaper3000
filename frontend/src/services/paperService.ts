@@ -1,5 +1,4 @@
 import type { PaperData, Category } from '../types/Paper';
-
 const API_BASE_URL = 'http://localhost:5324/api';
 
 export interface MetadataResponse {

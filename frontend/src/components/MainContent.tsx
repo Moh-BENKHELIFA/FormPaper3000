@@ -4,18 +4,34 @@ import PaperListView from './PaperListView';
 import PaperFilters from './PaperFilters';
 import { paperService } from '../services/paperService';
 import { useToast } from '../contexts/ToastContext';
-import type { PaperData, ReadingStatus } from '../types/Paper';
+import { notesStorage } from '../services/notesStorage';
+import type { PaperData } from '../types/Paper';
+import type { Block } from '../types/BlockTypes';
 import type { FilterOptions, SortOptions, ViewMode } from './PaperFilters';
 
-interface MainContentProps {
-  activeView?: string;
+// CORRECTION : Extension de PaperData pour inclure les notes
+interface PaperWithNotes extends PaperData {
+  notes?: Block[];
+  hasNotes?: boolean;
 }
 
-const MainContent: React.FC<MainContentProps> = ({ activeView = 'home' }) => {
-  const [papers, setPapers] = useState<PaperData[]>([]);
+// CORRECTION : Props interface avec PaperWithNotes
+interface MainContentProps {
+  activeView?: string;
+  onPaperClick?: (paper: PaperWithNotes) => void;
+  onPapersFiltered?: (papers: PaperWithNotes[]) => void;
+}
+
+const MainContent: React.FC<MainContentProps> = ({ 
+  activeView = 'home',
+  onPaperClick,
+  onPapersFiltered 
+}) => {
+  const [papers, setPapers] = useState<PaperWithNotes[]>([]);
   const [categories, setCategories] = useState<{ id: number; name: string }[]>([]);
   const [loading, setLoading] = useState(true);
   const [viewMode, setViewMode] = useState<ViewMode>('cards');
+  
   const { success, error: showError, info } = useToast();
 
   // États pour les filtres et le tri
@@ -45,7 +61,17 @@ const MainContent: React.FC<MainContentProps> = ({ activeView = 'home' }) => {
           paperService.getAllCategories()
         ]);
         
-        setPapers(papersData);
+        // Charger les notes pour chaque paper depuis le localStorage
+        const papersWithNotes: PaperWithNotes[] = papersData.map(paper => {
+          const notes = notesStorage.loadNotes(paper.id?.toString() || '');
+          return {
+            ...paper,
+            notes: notes || undefined,
+            hasNotes: notes ? notes.length > 0 : undefined
+          };
+        });
+        
+        setPapers(papersWithNotes);
         setCategories(categoriesData);
         success(`${papersData.length} article${papersData.length > 1 ? 's' : ''} chargé${papersData.length > 1 ? 's' : ''}`, 'Succès');
       } catch (error) {
@@ -59,7 +85,7 @@ const MainContent: React.FC<MainContentProps> = ({ activeView = 'home' }) => {
     if (activeView === 'home') {
       loadData();
     }
-  }, [activeView]);
+  }, [activeView, success, showError, info]);
 
   // Fonctions de filtrage et tri
   const filteredAndSortedPapers = useMemo(() => {
@@ -132,13 +158,8 @@ const MainContent: React.FC<MainContentProps> = ({ activeView = 'home' }) => {
           bValue = (b.conference || '').toLowerCase();
           break;
         case 'reading_status':
-          const statusOrder: Record<ReadingStatus, number> = { 
-            'non_lu': 0, 
-            'en_cours': 1, 
-            'lu': 2, 
-            'favoris': 3  // ✅ Ajouter favoris
-          };
-          aValue = statusOrder[a.reading_status];
+          const statusOrder: Record<string, number> = { 'non_lu': 0, 'en_cours': 1, 'lu': 2, 'favoris': 3 };  // ✅ Complet
+          aValue = statusOrder[a.reading_status] ?? 0;
           bValue = statusOrder[b.reading_status];
           break;
         case 'created_at':
@@ -156,48 +177,51 @@ const MainContent: React.FC<MainContentProps> = ({ activeView = 'home' }) => {
     return filtered;
   }, [papers, filters, sortOptions]);
 
+  // Notifier le parent quand les papers filtrés changent
+  useEffect(() => {
+    if (onPapersFiltered) {
+      onPapersFiltered(filteredAndSortedPapers);
+    }
+  }, [filteredAndSortedPapers, onPapersFiltered]);
+
   // Extraction des conférences uniques pour le filtre
   const uniqueConferences = useMemo(() => {
-  const conferences = papers
-    .map(paper => ({
-      name: paper.conference,
-      abbreviation: paper.conference_abbreviation
-    }))
-    .filter((conf) => conf.name) // ✅ Filtrer les null/undefined
-    .reduce((acc, conf) => {
-      const key = conf.abbreviation || conf.name;
-      if (key && !acc.find(c => c === key)) { // ✅ Vérifier que key existe
-        acc.push(key);
-      }
-      return acc;
-    }, [] as string[])
-    .sort();
-  return conferences;
-}, [papers]);
+    const conferences = papers
+      .map(paper => ({
+        name: paper.conference,
+        abbreviation: paper.conference_abbreviation
+      }))
+      .filter((conf) => conf.name || conf.abbreviation);
 
-  // Gestionnaires d'événements
-  const handlePaperClick = (paper: PaperData) => {
-    console.log('Clic sur paper:', paper);
-    // Ici vous pourriez ouvrir un modal de détails ou naviguer vers une page de détails
+    // Supprimer les doublons
+    const seen = new Set();
+    return conferences.filter(conf => {
+      const key = `${conf.name}-${conf.abbreviation}`;
+      if (seen.has(key)) {
+        return false;
+      }
+      seen.add(key);
+      return true;
+    });
+  }, [papers]);
+
+  // Gestion du clic sur un paper
+  const handlePaperClick = (paper: PaperWithNotes) => {
+    if (onPaperClick) {
+      onPaperClick(paper);
+    }
   };
 
   const handleStatusChange = async (paperId: number, newStatus: PaperData['reading_status']) => {
     try {
-      info(`Mise à jour du statut...`, 'Traitement');
       await paperService.updatePaper(paperId, { reading_status: newStatus });
       
-      // Mettre à jour l'état local
-      setPapers(prevPapers =>
-        prevPapers.map(paper =>
-          paper.id === paperId
-            ? { ...paper, reading_status: newStatus }
-            : paper
-        )
-      );
+      // Mettre à jour localement
+      setPapers(papers.map(paper => 
+        paper.id === paperId ? { ...paper, reading_status: newStatus } : paper
+      ));
       
-      const statusText = newStatus === 'non_lu' ? 'Non lu' : 
-                        newStatus === 'en_cours' ? 'En cours' : 'Lu';
-      success(`Statut mis à jour: ${statusText}`, 'Succès');
+      success('Statut mis à jour', 'Succès');
     } catch (error) {
       console.error('Erreur lors de la mise à jour du statut:', error);
       showError('Erreur lors de la mise à jour du statut', 'Erreur');
@@ -205,125 +229,151 @@ const MainContent: React.FC<MainContentProps> = ({ activeView = 'home' }) => {
   };
 
   const handleDelete = async (paperId: number) => {
+    if (!window.confirm('Êtes-vous sûr de vouloir supprimer cet article et ses notes ?')) {
+      return;
+    }
+
     try {
-      info('Suppression en cours...', 'Traitement');
       await paperService.deletePaper(paperId);
       
-      // Mettre à jour l'état local
-      setPapers(prevPapers => prevPapers.filter(paper => paper.id !== paperId));
-      success('Article supprimé avec succès', 'Succès');
+      // Supprimer aussi les notes
+      notesStorage.deleteNotes(paperId.toString());
+      
+      // Supprimer localement
+      setPapers(papers.filter(paper => paper.id !== paperId));
+      success('Article supprimé', 'Succès');
     } catch (error) {
       console.error('Erreur lors de la suppression:', error);
       showError('Erreur lors de la suppression', 'Erreur');
     }
   };
 
-  const handleSortChange = (newSort: SortOptions) => {
-    setSortOptions(newSort);
+  const handleFiltersChange = (newFilters: FilterOptions) => {
+    setFilters(newFilters);
+  };
+
+  const handleSortChange = (newSortOptions: SortOptions) => {
+    setSortOptions(newSortOptions);
   };
 
   const handleSortFieldChange = (field: string) => {
-    if (sortOptions.field === field) {
-      // Si on clique sur le même champ, inverser l'ordre
-      setSortOptions(prev => ({
-        ...prev,
-        order: prev.order === 'asc' ? 'desc' : 'asc'
-      }));
-    } else {
-      // Nouveau champ, ordre par défaut
-      setSortOptions({
-        field: field as SortOptions['field'],
-        order: field === 'title' || field === 'authors' || field === 'conference' ? 'asc' : 'desc'
-      });
-    }
+    setSortOptions(prev => ({
+      field: field as SortOptions['field'],
+      order: prev.field === field && prev.order === 'asc' ? 'desc' : 'asc'
+    }));
   };
 
-  // Rendu pour les autres vues
-  if (activeView !== 'home') {
+  const handleViewModeChange = (newViewMode: ViewMode) => {
+    setViewMode(newViewMode);
+  };
+
+  if (loading) {
     return (
-      <main className="flex-1 ml-64 mt-16 p-6 bg-white">
-        <div className="text-center text-gray-500 mt-20">
-          <h2 className="text-2xl font-bold mb-4">Contenu pour: {activeView}</h2>
-          <p>Cette section sera implémentée prochainement.</p>
+      <main className="flex-1 overflow-auto">
+        <div className="max-w-7xl mx-auto px-6 py-8">
+          <div className="flex items-center justify-center h-64">
+            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
+            <span className="ml-3 text-gray-600">Chargement des articles...</span>
+          </div>
         </div>
       </main>
     );
   }
 
   return (
-    <main className="flex-1 ml-64 mt-16 p-6 bg-gray-50 min-h-screen">
-      {/* En-tête de section */}
-      <div className="mb-6">
-        <div className="flex items-center space-x-3 mb-4">
-          <span className="text-2xl">📚</span>
-          <h2 className="text-2xl font-bold text-gray-800">
-            Bibliothèque d'articles
-          </h2>
-        </div>
-      </div>
-
-      {/* Filtres et contrôles */}
-      <PaperFilters
-        filters={filters}
-        onFiltersChange={setFilters}
-        sortOptions={sortOptions}
-        onSortChange={handleSortChange}
-        viewMode={viewMode}
-        onViewModeChange={setViewMode}
-        conferences={uniqueConferences}
-        categories={categories}
-        totalCount={papers.length}
-        filteredCount={filteredAndSortedPapers.length}
-      />
-
-      {/* Contenu principal */}
-      {loading ? (
-        <div className="flex items-center justify-center py-20">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
-          <span className="ml-3 text-gray-600">Chargement des articles...</span>
-        </div>
-      ) : filteredAndSortedPapers.length === 0 ? (
-        <div className="text-center text-gray-500 py-20">
-          <div className="text-6xl mb-4">📚</div>
-          <h3 className="text-xl font-semibold mb-2">
-            {papers.length === 0 ? 'Aucun article trouvé' : 'Aucun résultat'}
-          </h3>
-          <p>
-            {papers.length === 0 
-              ? 'Commencez par ajouter votre premier article de recherche.'
-              : 'Essayez de modifier vos critères de recherche.'
-            }
+    <main className="flex-1 overflow-auto">
+      <div className="max-w-7xl mx-auto px-6 py-8">
+        {/* En-tête */}
+        <div className="mb-8">
+          <h1 className="text-3xl font-bold text-gray-900">Mes Articles</h1>
+          <p className="mt-2 text-gray-600">
+            {papers.length} article{papers.length > 1 ? 's' : ''} au total
+            {filteredAndSortedPapers.length !== papers.length && (
+              <span>, {filteredAndSortedPapers.length} affiché{filteredAndSortedPapers.length > 1 ? 's' : ''}</span>
+            )}
+            {papers.filter(p => p.hasNotes).length > 0 && (
+              <span className="ml-2 text-sm text-blue-600">
+                • {papers.filter(p => p.hasNotes).length} avec des notes
+              </span>
+            )}
           </p>
         </div>
-      ) : (
-        <>
-          {viewMode === 'cards' ? (
-            /* Vue en cartes */
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
-              {filteredAndSortedPapers.map((paper) => (
-                <PaperCard
-                  key={paper.id}
-                  paper={paper}
-                  onClick={handlePaperClick}
-                  onStatusChange={handleStatusChange}
-                  onDelete={handleDelete}
-                />
-              ))}
-            </div>
-          ) : (
-            /* Vue en liste */
-            <PaperListView
-              papers={filteredAndSortedPapers}
-              onPaperClick={handlePaperClick}
-              onStatusChange={handleStatusChange}
-              onDelete={handleDelete}
-              sortField={sortOptions.field}
-              sortOrder={sortOptions.order}
-              onSort={handleSortFieldChange}
-            />
-          )}
-        </>
-      )}
+
+        {/* Filtres et recherche */}
+        <div className="mb-8">
+          <PaperFilters
+          filters={filters}
+          sortOptions={sortOptions}
+          viewMode={viewMode}
+          categories={categories}
+          conferences={uniqueConferences}
+          totalCount={papers.length}
+          filteredCount={filteredAndSortedPapers.length}   // ✅ correction
+          onFiltersChange={setFilters}
+          onSortChange={setSortOptions}
+          onViewModeChange={setViewMode}
+        />
+
+          
+        </div>
+
+        {/* Contenu */}
+        {filteredAndSortedPapers.length === 0 ? (
+          <div className="text-center text-gray-500 py-20">
+            <div className="text-6xl mb-4">📚</div>
+            <h3 className="text-xl font-semibold mb-2">
+              {papers.length === 0 ? 'Aucun article trouvé' : 'Aucun résultat'}
+            </h3>
+            <p>
+              {papers.length === 0 
+                ? 'Commencez par ajouter votre premier article de recherche.'
+                : 'Essayez de modifier vos critères de recherche.'
+              }
+            </p>
+          </div>
+        ) : (
+          <>
+            {viewMode === 'cards' ? (
+              /* Vue en cartes avec indicateur de notes */
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+                {filteredAndSortedPapers.map((paper) => (
+                  <div 
+                    key={paper.id} 
+                    className="relative"
+                    title="Cliquez pour ouvrir les notes"
+                  >
+                    <PaperCard
+                      paper={paper}
+                      onClick={() => handlePaperClick(paper)}
+                      onStatusChange={handleStatusChange}
+                      onDelete={handleDelete}
+                    />
+                    {/* Indicateur de notes existantes */}
+                    {paper.hasNotes && (
+                      <div className="absolute top-2 left-2 bg-blue-500 text-white rounded-full p-1 shadow-sm">
+                        <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
+                          <path fillRule="evenodd" d="M4 4a2 2 0 012-2h4.586A2 2 0 0112 2.586L15.414 6A2 2 0 0116 7.414V16a2 2 0 01-2 2H6a2 2 0 01-2-2V4zm2 6a1 1 0 011-1h6a1 1 0 110 2H7a1 1 0 01-1-1zm1 3a1 1 0 100 2h6a1 1 0 100-2H7z" clipRule="evenodd" />
+                        </svg>
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            ) : (
+              /* Vue en liste */
+              <PaperListView
+                papers={filteredAndSortedPapers}
+                onPaperClick={handlePaperClick}
+                onStatusChange={handleStatusChange}
+                onDelete={handleDelete}
+                sortField={sortOptions.field}
+                sortOrder={sortOptions.order}
+                onSort={handleSortFieldChange}
+              />
+            )}
+          </>
+        )}
+      </div>
     </main>
   );
 };

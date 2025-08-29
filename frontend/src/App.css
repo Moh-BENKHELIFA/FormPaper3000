@@ -28,7 +28,12 @@
 /* Animation pour les cartes */
 .paper-card {
   transition: all 0.2s ease-in-out;
+  -webkit-user-select: none;
+  -moz-user-select: none;
+  -ms-user-select: none;
+  user-select: none;
 }
+
 
 .paper-card:hover {
   transform: translateY(-2px);
@@ -165,4 +170,11 @@
   transform: translateY(100%);
   opacity: 0;
   transition: all 0.3s ease-in-out;
+}
+
+
+
+/* Style pour l'indicateur de double-clic */
+.double-click-hint {
+  transition: opacity 0.2s ease-in-out;
 }

@@ -12,7 +12,7 @@ import { notesStorage } from '../services/notesStorage';
 import type { PaperData } from '../types/Paper';
 import type { Block } from '../types/BlockTypes';
 
-// CORRECTION : Étendre l'interface PaperData
+// Extension de l'interface PaperData pour inclure les notes
 interface PaperWithNotes extends PaperData {
   notes?: Block[];
   hasNotes?: boolean;
@@ -43,14 +43,60 @@ const HomePageContent: React.FC = () => {
   const [activeItem, setActiveItem] = useState('home');
   const [isAddPaperModalOpen, setIsAddPaperModalOpen] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [recentPapers, setRecentPapers] = useState<PaperWithNotes[]>([]);  // ✅ AJOUT: Historique des articles récents
   
   const { success, error: showError } = useToast();
 
-  // Charger les papers au démarrage
+  // ✅ AJOUT: Sauvegarder l'historique dans localStorage (déplacé avant son utilisation)
+  const updateRecentPapers = useCallback((paper: PaperWithNotes) => {
+    setRecentPapers(prev => {
+      // Retirer le paper s'il existe déjà dans l'historique
+      const filtered = prev.filter(p => p.id !== paper.id);
+      // Ajouter le paper au début
+      const newRecent = [paper, ...filtered].slice(0, 5);
+      // Sauvegarder dans localStorage
+      localStorage.setItem('recentPapersHistory', JSON.stringify(newRecent));
+      return newRecent;
+    });
+  }, []);
+  
+  // ✅ CORRECTION: loadPapers stabilisée avec useCallback sans dépendances
+  const loadPapers = useCallback(async () => {
+    try {
+      setLoading(true);
+      const papersData = await paperService.getAllPapers();
+      
+      // Charger les notes pour chaque paper
+      const papersWithNotes: PaperWithNotes[] = papersData.map(paper => {
+        const notes = notesStorage.loadNotes(paper.id?.toString() || '');
+        return {
+          ...paper,
+          notes: notes || undefined,
+          hasNotes: notes ? notes.length > 0 : undefined
+        };
+      });
+      
+      setAppState(prev => ({
+        ...prev,
+        papers: papersWithNotes,
+        filteredPapers: prev.filteredPapers.length === 0 ? papersWithNotes : prev.filteredPapers
+      }));
+      
+    } catch (error) {
+      console.error('Erreur lors du chargement des papers:', error);
+      showError('Erreur lors du chargement des articles');
+    } finally {
+      setLoading(false);
+    }
+  }, []); // ✅ Pas de dépendances pour éviter les re-créations
+
+  // ✅ CORRECTION: useEffect séparé pour le chargement initial
   useEffect(() => {
     loadPapers();
-    
-    // Gérer les événements de navigation du navigateur
+  }, []); // ✅ Charger une seule fois au montage
+
+  // ✅ CORRECTION: useEffect séparé pour la gestion du popstate
+  useEffect(() => {
     const handlePopState = (event: PopStateEvent) => {
       if (event.state) {
         const { route, paperId } = event.state;
@@ -75,67 +121,9 @@ const HomePageContent: React.FC = () => {
 
     window.addEventListener('popstate', handlePopState);
     return () => window.removeEventListener('popstate', handlePopState);
-  }, [appState.papers, appState.filteredPapers]);
+  }, [appState.papers, appState.filteredPapers]); // ✅ Dépendances correctes pour le popstate uniquement
 
-  // Charger tous les papers
-  const loadPapers = async () => {
-    try {
-      setLoading(true);
-      const papersData = await paperService.getAllPapers();
-      
-      // Charger les notes pour chaque paper
-      const papersWithNotes: PaperWithNotes[] = papersData.map(paper => {
-        const notes = notesStorage.loadNotes(paper.id?.toString() || '');
-        return {
-          ...paper,
-          notes: notes || undefined,
-          hasNotes: notes ? notes.length > 0 : undefined
-        };
-      });
-      
-      setAppState(prev => ({
-        ...prev,
-        papers: papersWithNotes,
-        filteredPapers: papersWithNotes
-      }));
-      
-    } catch (error) {
-      console.error('Erreur lors du chargement des papers:', error);
-      showError('Erreur lors du chargement des articles', 'Erreur');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  // Navigation vers un paper
-  const navigateToPaper = useCallback((paper: PaperWithNotes) => {
-    const paperIndex = appState.filteredPapers.findIndex(p => p.id === paper.id);
-    
-    // Charger les notes du paper
-    const notes = notesStorage.loadNotes(paper.id?.toString() || '');
-    const paperWithNotes: PaperWithNotes = { 
-      ...paper, 
-      notes: notes || undefined,
-      hasNotes: notes ? notes.length > 0 : undefined
-    };
-    
-    // Mettre à jour l'état
-    setAppState(prev => ({
-      ...prev,
-      currentRoute: 'paper',
-      currentPaper: paperWithNotes,
-      currentPaperIndex: paperIndex
-    }));
-    
-    setActiveItem('paper-view');
-    
-    // Mettre à jour l'URL et l'historique
-    const url = `/paper/${paper.id}`;
-    const state = { route: 'paper', paperId: paper.id };
-    window.history.pushState(state, '', url);
-  }, [appState.filteredPapers]);
-
-  // Navigation vers l'accueil
+  // Navigation vers la page d'accueil
   const navigateToHome = useCallback(() => {
     setAppState(prev => ({
       ...prev,
@@ -143,41 +131,68 @@ const HomePageContent: React.FC = () => {
       currentPaper: null,
       currentPaperIndex: -1
     }));
-    
     setActiveItem('home');
-    
-    // Mettre à jour l'URL
-    const state = { route: 'home' };
-    window.history.pushState(state, '', '/');
+    window.history.pushState({ route: 'home' }, '', '/');
   }, []);
+
+  // Navigation vers un paper
+  const navigateToPaper = useCallback((paper: PaperWithNotes) => {
+    const index = appState.filteredPapers.findIndex(p => p.id === paper.id);
+    
+    // Charger les notes si nécessaire
+    const notes = notesStorage.loadNotes(paper.id?.toString() || '');
+    const paperWithNotes = {
+      ...paper,
+      notes: notes || undefined,
+      hasNotes: notes ? notes.length > 0 : undefined
+    };
+    
+    // ✅ AJOUT: Mettre à jour l'historique des articles récents
+    updateRecentPapers(paperWithNotes);
+    
+    setAppState(prev => ({
+      ...prev,
+      currentRoute: 'paper',
+      currentPaper: paperWithNotes,
+      currentPaperIndex: index
+    }));
+    setActiveItem('paper-view');
+    
+    window.history.pushState(
+      { route: 'paper', paperId: paper.id },
+      '',
+      `/paper/${paper.id}`
+    );
+  }, [appState.filteredPapers, updateRecentPapers]);
+
+  // Navigation vers le paper précédent
+  const navigateToPrevious = useCallback(() => {
+    if (appState.currentPaperIndex > 0) {
+      const previousPaper = appState.filteredPapers[appState.currentPaperIndex - 1];
+      navigateToPaper(previousPaper);
+    }
+  }, [appState.currentPaperIndex, appState.filteredPapers, navigateToPaper]);
 
   // Navigation vers le paper suivant
   const navigateToNext = useCallback(() => {
-    const nextIndex = appState.currentPaperIndex + 1;
-    if (nextIndex < appState.filteredPapers.length) {
-      const nextPaper = appState.filteredPapers[nextIndex];
+    if (appState.currentPaperIndex < appState.filteredPapers.length - 1) {
+      const nextPaper = appState.filteredPapers[appState.currentPaperIndex + 1];
       navigateToPaper(nextPaper);
     }
   }, [appState.currentPaperIndex, appState.filteredPapers, navigateToPaper]);
 
-  // Navigation vers le paper précédent
-  const navigateToPrevious = useCallback(() => {
-    const prevIndex = appState.currentPaperIndex - 1;
-    if (prevIndex >= 0) {
-      const prevPaper = appState.filteredPapers[prevIndex];
-      navigateToPaper(prevPaper);
-    }
-  }, [appState.currentPaperIndex, appState.filteredPapers, navigateToPaper]);
-
-  // Gérer les changements de filtres dans MainContent
+  // Gestion de la mise à jour des papers filtrés
   const handlePapersFiltered = useCallback((filteredPapers: PaperWithNotes[]) => {
-    setAppState(prev => ({ ...prev, filteredPapers }));
+    setAppState(prev => ({
+      ...prev,
+      filteredPapers
+    }));
   }, []);
 
-  // Sauvegarder les notes d'un paper
+  // Sauvegarde des notes
   const handleSaveNotes = useCallback((blocks: Block[]) => {
-    if (appState.currentPaper) {
-      notesStorage.saveNotes(appState.currentPaper.id?.toString() || '', blocks);
+    if (appState.currentPaper?.id) {
+      notesStorage.saveNotes(appState.currentPaper.id.toString(), blocks);
       
       // Mettre à jour l'état local
       setAppState(prev => ({
@@ -186,12 +201,28 @@ const HomePageContent: React.FC = () => {
           ...prev.currentPaper, 
           notes: blocks,
           hasNotes: blocks.length > 0
-        } : null
+        } : null,
+        papers: prev.papers.map(p => 
+          p.id === prev.currentPaper?.id 
+            ? { ...p, notes: blocks, hasNotes: blocks.length > 0 }
+            : p
+        )
       }));
       
       success('Notes sauvegardées', 'Succès');
     }
   }, [appState.currentPaper, success]);
+
+  // ✅ AJOUT: Gérer le clic sur un article récent
+  const handleRecentPaperClick = useCallback((paperId: number) => {
+    const paper = appState.papers.find(p => p.id === paperId);
+    if (paper) {
+      navigateToPaper(paper);
+    } else {
+      // Si le paper n'est pas dans la liste actuelle, essayer de le charger
+      showError('Article non trouvé dans la liste actuelle');
+    }
+  }, [appState.papers, navigateToPaper, showError]);
 
   // Gestion des actions de la sidebar
   const handleItemSelect = useCallback((item: string) => {
@@ -209,12 +240,17 @@ const HomePageContent: React.FC = () => {
     setIsAddPaperModalOpen(false);
   }, []);
 
+  // ✅ CORRECTION: handlePaperSaved avec loadPapers dans les dépendances
   const handlePaperSaved = useCallback(async (paperData: any) => {
     console.log('Article sauvegardé:', paperData);
+    
+    // Invalider le cache avant de recharger
+    paperService.invalidateCache();
     await loadPapers();
+    
     setIsAddPaperModalOpen(false);
     success('Article ajouté avec succès', 'Succès');
-  }, [success]);
+  }, [loadPapers, success]); // ✅ loadPapers ajouté aux dépendances
 
   // Rendu conditionnel du contenu principal
   const renderMainContent = () => {
@@ -250,8 +286,8 @@ const HomePageContent: React.FC = () => {
 
         return (
           <div className="flex-1 flex flex-col">
-            {/* Barre de navigation pour PaperNotes */}
-            <div className="bg-white border-b px-6 py-3 flex items-center justify-between">
+            {/* Barre de navigation pour PaperNotes - pas de margin car pas de sidebar */}
+            <div className="bg-white border-b px-6 py-3 flex items-center justify-between mt-16">
               <div className="flex items-center space-x-4">
                 <button
                   onClick={navigateToHome}
@@ -264,7 +300,7 @@ const HomePageContent: React.FC = () => {
                   Article {appState.currentPaperIndex + 1} sur {appState.filteredPapers.length}
                 </div>
               </div>
-              <div className="flex items-center space-x-2">  // ✅ Container ajouté
+              <div className="flex items-center space-x-2">
                 <button
                   onClick={navigateToPrevious}
                   disabled={appState.currentPaperIndex <= 0}
@@ -317,9 +353,13 @@ const HomePageContent: React.FC = () => {
       default:
         return (
           <MainContent 
+            papers={appState.papers}
+            loading={loading}
             activeView={activeItem}
             onPaperClick={navigateToPaper}
             onPapersFiltered={handlePapersFiltered}
+            onReload={loadPapers}
+            hasSidebar={true}  // ✅ La sidebar est visible sur la page d'accueil
           />
         );
     }
@@ -328,16 +368,25 @@ const HomePageContent: React.FC = () => {
   return (
     <div className="min-h-screen bg-gray-50">
       {/* Menu du haut - fixe */}
-      <TopMenu />
+      <TopMenu onTitleClick={navigateToHome} />
       
       {/* Layout avec sidebar et contenu principal */}
       <div className="flex">
-        {/* Sidebar - fixe */}
-        <Sidebar 
-          activeItem={activeItem}
-          onItemSelect={handleItemSelect}
-          onAddPaperClick={handleAddPaperClick}
-        />
+        {/* Sidebar - affichée uniquement sur la page d'accueil */}
+        {appState.currentRoute === 'home' && (
+          <Sidebar 
+            activeItem={activeItem}
+            onItemSelect={handleItemSelect}
+            onAddPaperClick={handleAddPaperClick}
+            recentPapers={recentPapers.map(p => ({  // ✅ Passer l'historique à la Sidebar
+              id: p.id!,
+              title: p.title,
+              authors: p.authors,
+              reading_status: p.reading_status as string  // ✅ CORRECTION: Cast en string
+            }))}
+            onRecentPaperClick={handleRecentPaperClick}  // ✅ Callback pour ouvrir un article récent
+          />
+        )}
         
         {/* Contenu principal - conditionnel */}
         {renderMainContent()}

@@ -61,6 +61,7 @@ const PaperCard: React.FC<PaperCardProps> = ({
 
   const handleStatusClick = (e: React.MouseEvent, newStatus: PaperData['reading_status']) => {
     e.stopPropagation();
+    e.preventDefault();
     if (onStatusChange && paper.id) {
       onStatusChange(paper.id, newStatus);
     }
@@ -68,21 +69,31 @@ const PaperCard: React.FC<PaperCardProps> = ({
 
   const handleDeleteClick = (e: React.MouseEvent) => {
     e.stopPropagation();
+    e.preventDefault();
     if (onDelete && paper.id && window.confirm('Êtes-vous sûr de vouloir supprimer cet article ?')) {
       onDelete(paper.id);
     }
   };
 
-  const handleCardClick = () => {
+  // ✅ CORRECTION: Utiliser onDoubleClick au lieu de onClick
+  const handleCardDoubleClick = () => {
     if (onClick) {
       onClick(paper);
     }
   };
 
+  // ✅ Empêcher le comportement par défaut du simple clic
+  const handleCardClick = (e: React.MouseEvent) => {
+    // Ne rien faire sur simple clic, mais empêcher la propagation
+    e.stopPropagation();
+  };
+
   return (
     <div
-      className="bg-white rounded-lg shadow-md hover:shadow-lg transition-all duration-200 overflow-hidden cursor-pointer group"
-      onClick={handleCardClick}
+      className="bg-white rounded-lg shadow-md hover:shadow-lg transition-all duration-200 overflow-hidden cursor-pointer group select-none"
+      onDoubleClick={handleCardDoubleClick}  // ✅ Double-clic pour ouvrir
+      onClick={handleCardClick}               // ✅ Simple clic ne fait rien
+      title="Double-cliquez pour ouvrir l'article"
     >
       {/* Image */}
       <div className="h-48 bg-gray-200 overflow-hidden relative">
@@ -112,6 +123,13 @@ const PaperCard: React.FC<PaperCardProps> = ({
             {statusConfig.text}
           </span>
         </div>
+
+        {/* ✅ AJOUT: Indicateur de double-clic */}
+        <div className="absolute bottom-2 left-2 opacity-0 group-hover:opacity-100 transition-opacity">
+          <span className="bg-black bg-opacity-70 text-white text-xs px-2 py-1 rounded">
+            Double-clic pour ouvrir
+          </span>
+        </div>
       </div>
 
       {/* Contenu */}
@@ -134,7 +152,11 @@ const PaperCard: React.FC<PaperCardProps> = ({
             target="_blank"
             rel="noopener noreferrer"
             className="ml-1 underline hover:text-blue-800"
-            onClick={(e) => e.stopPropagation()}
+            onClick={(e) => {
+              e.stopPropagation();
+              e.preventDefault();
+              window.open(`https://doi.org/${paper.doi}`, '_blank');
+            }}
           >
             {paper.doi}
           </a>
@@ -143,8 +165,10 @@ const PaperCard: React.FC<PaperCardProps> = ({
         {/* Conférence et Date */}
         <div className="flex items-center justify-between text-xs text-gray-500 mb-3">
           {(paper.conference_abbreviation || paper.conference) && (
-            <span className="bg-orange-100 text-orange-800 px-2 py-1 rounded truncate max-w-[60%]" title={(paper.conference || paper.conference_abbreviation) ?? undefined}
->
+            <span 
+              className="bg-orange-100 text-orange-800 px-2 py-1 rounded truncate max-w-[60%]" 
+              title={(paper.conference || paper.conference_abbreviation) ?? undefined}
+            >
               {paper.conference_abbreviation || paper.conference}
             </span>
           )}
@@ -208,9 +232,13 @@ const PaperCard: React.FC<PaperCardProps> = ({
                 href={paper.url}
                 target="_blank"
                 rel="noopener noreferrer"
-                onClick={(e) => e.stopPropagation()}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  e.preventDefault();
+                  window.open(paper.url, '_blank');
+                }}
                 className="text-gray-400 hover:text-blue-600 transition-colors"
-                title="Ouvrir l'article"
+                title="Ouvrir l'article original"
               >
                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
@@ -231,7 +259,11 @@ const PaperCard: React.FC<PaperCardProps> = ({
             
             {/* Menu plus d'options */}
             <button
-              onClick={(e) => e.stopPropagation()}
+              onClick={(e) => {
+                e.stopPropagation();
+                e.preventDefault();
+                // TODO: Implémenter le menu d'options
+              }}
               className="text-gray-400 hover:text-gray-600 transition-colors"
               title="Plus d'options"
             >

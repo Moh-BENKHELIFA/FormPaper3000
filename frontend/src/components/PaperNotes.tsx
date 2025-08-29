@@ -1,6 +1,6 @@
-// PaperNotes.tsx - Version adaptée pour navigation complète
+// PaperNotes.tsx - Version avec raccourci Ctrl+S
 import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { FileText, Calendar, Tag, ExternalLink, Plus, Check, Download } from 'lucide-react';
+import { FileText, Calendar, Tag, ExternalLink, Plus, Check, Download, Save } from 'lucide-react';
 import type { Block, BlockType, Position } from '../types/BlockTypes';
 import { TextBlock } from './commands/TextBlock';
 import { HeadingBlock } from './commands/HeadingBlock';
@@ -55,6 +55,8 @@ const PaperNotes: React.FC<PaperNotesProps> = ({
   const [activeBlockId, setActiveBlockId] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [isSaving, setIsSaving] = useState<boolean>(false);
+  const [lastSaveTime, setLastSaveTime] = useState<Date | null>(null);
+  const [showSaveNotification, setShowSaveNotification] = useState<boolean>(false);
   const menuRef = useRef<HTMLDivElement>(null);
 
   // Commandes disponibles
@@ -73,24 +75,24 @@ const PaperNotes: React.FC<PaperNotesProps> = ({
   const filteredCommands = searchQuery 
     ? commands.filter(cmd => 
         cmd.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        cmd.command.toLowerCase().includes(searchQuery.toLowerCase())
+        cmd.command.includes(searchQuery)
       )
     : commands;
 
-  // Obtenir le placeholder selon le type de bloc
+  // Fonction pour obtenir le placeholder selon le type
   const getPlaceholderForType = (type: BlockType): string => {
     switch (type) {
-      case 'h1': return 'Titre principal...';
-      case 'h2': return 'Sous-titre...';
-      case 'h3': return 'Titre de section...';
-      case 'bullet': return 'Élément de liste...';
-      case 'list': return '1. Premier élément...';
-      case 'image': return 'URL de l\'image...';
-      default: return 'Tapez \'/\' pour les commandes...';
+      case 'h1': return 'Titre principal';
+      case 'h2': return 'Sous-titre';
+      case 'h3': return 'Titre de section';
+      case 'bullet': return 'Élément de liste';
+      case 'list': return 'Élément numéroté';
+      case 'image': return "Entrez l'URL de l'image";
+      default: return "Commencez à écrire ou tapez '/' pour les commandes...";
     }
   };
 
-  // Gérer les commandes slash
+  // Gérer la commande slash
   const handleSlashCommand = useCallback((blockId: string, position: Position): void => {
     setActiveBlockId(blockId);
     setSlashMenuPosition(position);
@@ -101,9 +103,9 @@ const PaperNotes: React.FC<PaperNotesProps> = ({
   // Sélectionner une commande
   const selectCommand = useCallback((type: BlockType): void => {
     if (activeBlockId) {
-      setBlocks(prevBlocks => 
-        prevBlocks.map(block => 
-          block.id === activeBlockId 
+      setBlocks(prevBlocks =>
+        prevBlocks.map(block =>
+          block.id === activeBlockId
             ? { 
                 ...block, 
                 type, 
@@ -162,16 +164,50 @@ const PaperNotes: React.FC<PaperNotesProps> = ({
     });
   }, []);
 
-  // Sauvegarder manuellement avec feedback visuel
+  // ✅ AJOUT: Sauvegarder manuellement avec feedback visuel amélioré
   const handleSave = useCallback(() => {
     if (onSave) {
       setIsSaving(true);
+      setShowSaveNotification(true);
       onSave(blocks);
+      setLastSaveTime(new Date());
+      
+      // Masquer l'indicateur de sauvegarde après 1 seconde
       setTimeout(() => {
         setIsSaving(false);
       }, 1000);
+      
+      // Masquer la notification après 3 secondes
+      setTimeout(() => {
+        setShowSaveNotification(false);
+      }, 3000);
     }
   }, [blocks, onSave]);
+
+  // ✅ AJOUT: Gestionnaire de raccourci clavier Ctrl+S / Cmd+S
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Vérifier si Ctrl+S (Windows/Linux) ou Cmd+S (Mac) est pressé
+      if ((e.ctrlKey || e.metaKey) && e.key === 's') {
+        e.preventDefault(); // Empêcher le comportement par défaut du navigateur
+        handleSave();
+      }
+      
+      // Raccourci Escape pour fermer le menu slash
+      if (e.key === 'Escape' && showSlashMenu) {
+        setShowSlashMenu(false);
+        setSearchQuery('');
+      }
+    };
+
+    // Ajouter l'écouteur d'événements
+    document.addEventListener('keydown', handleKeyDown);
+
+    // Nettoyer l'écouteur lors du démontage
+    return () => {
+      document.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [handleSave, showSlashMenu]);
 
   // Exporter les notes en JSON
   const handleExport = useCallback(() => {
@@ -210,6 +246,7 @@ const PaperNotes: React.FC<PaperNotesProps> = ({
     if (onSave) {
       const timer = setTimeout(() => {
         onSave(blocks);
+        setLastSaveTime(new Date());
       }, 2000); // Auto-save après 2 secondes d'inactivité
       
       return () => clearTimeout(timer);
@@ -259,6 +296,17 @@ const PaperNotes: React.FC<PaperNotesProps> = ({
     }
   };
 
+  // Formater l'heure de la dernière sauvegarde
+  const formatLastSaveTime = () => {
+    if (!lastSaveTime) return '';
+    const now = new Date();
+    const diff = Math.floor((now.getTime() - lastSaveTime.getTime()) / 1000);
+    
+    if (diff < 60) return 'Sauvegardé à l\'instant';
+    if (diff < 3600) return `Sauvegardé il y a ${Math.floor(diff / 60)} min`;
+    return `Sauvegardé à ${lastSaveTime.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}`;
+  };
+
   return (
     <div className="h-full bg-white overflow-hidden flex flex-col">
       {/* Header avec les informations du papier - plus compact */}
@@ -275,26 +323,32 @@ const PaperNotes: React.FC<PaperNotesProps> = ({
           
           {/* Boutons d'action */}
           <div className="absolute top-4 right-4 flex gap-2 z-10">
-            {/* Bouton Sauvegarder avec indicateur */}
+            {/* ✅ MODIFICATION: Bouton Sauvegarder avec indicateur et raccourci */}
             <button
               type="button"
               onClick={handleSave}
-              className={`p-2 rounded-full shadow-lg transition-all ${
+              className={`px-3 py-2 rounded-lg shadow-lg transition-all flex items-center gap-2 ${
                 isSaving 
                   ? 'bg-green-600 text-white animate-pulse' 
                   : 'bg-green-500 text-white hover:bg-green-600'
               }`}
-              title="Sauvegarder les notes"
+              title="Sauvegarder (Ctrl+S / Cmd+S)"
               disabled={isSaving}
             >
-              <Check className="w-4 h-4" />
+              <Save className="w-4 h-4" />
+              <span className="text-sm font-medium">
+                {isSaving ? 'Sauvegarde...' : 'Sauvegarder'}
+              </span>
+              <kbd className="hidden sm:inline-block text-xs bg-green-600 px-1 rounded">
+                {navigator.platform.includes('Mac') ? '⌘' : 'Ctrl'}+S
+              </kbd>
             </button>
             
             {/* Bouton Exporter */}
             <button
               type="button"
               onClick={handleExport}
-              className="p-2 bg-blue-500 text-white rounded-full shadow-lg hover:bg-blue-600 transition-colors"
+              className="p-2 bg-blue-500 text-white rounded-lg shadow-lg hover:bg-blue-600 transition-colors"
               title="Exporter les notes"
             >
               <Download className="w-4 h-4" />
@@ -326,6 +380,12 @@ const PaperNotes: React.FC<PaperNotesProps> = ({
                   PDF
                   <ExternalLink className="w-2 h-2" />
                 </a>
+              )}
+              {/* ✅ AJOUT: Indicateur de dernière sauvegarde */}
+              {lastSaveTime && (
+                <span className="text-xs text-gray-500 ml-auto">
+                  {formatLastSaveTime()}
+                </span>
               )}
             </div>
           </div>
@@ -396,12 +456,26 @@ const PaperNotes: React.FC<PaperNotesProps> = ({
         </div>
       )}
 
-      {/* Indicateur de sauvegarde automatique */}
-      {isSaving && (
-        <div className="fixed bottom-4 right-4 bg-green-500 text-white px-4 py-2 rounded-lg shadow-lg animate-pulse">
-          Sauvegarde en cours...
+      {/* ✅ AJOUT: Notification de sauvegarde réussie */}
+      {showSaveNotification && (
+        <div className="fixed bottom-4 right-4 bg-green-600 text-white px-4 py-3 rounded-lg shadow-lg flex items-center gap-2 animate-slide-in-up">
+          <Check className="w-5 h-5" />
+          <div>
+            <p className="font-medium">Notes sauvegardées</p>
+            <p className="text-xs opacity-90">{formatLastSaveTime()}</p>
+          </div>
         </div>
       )}
+
+      {/* ✅ AJOUT: Aide pour les raccourcis clavier */}
+      <div className="fixed bottom-4 left-4 text-xs text-gray-400">
+        <div className="flex items-center gap-2">
+          <kbd className="px-2 py-1 bg-gray-100 rounded border border-gray-200">
+            {navigator.platform.includes('Mac') ? '⌘' : 'Ctrl'}+S
+          </kbd>
+          <span>pour sauvegarder</span>
+        </div>
+      </div>
     </div>
   );
 };

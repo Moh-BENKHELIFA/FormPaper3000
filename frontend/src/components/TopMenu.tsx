@@ -1,10 +1,21 @@
 import React from 'react';
 
-const TopMenu: React.FC = () => {
+interface TopMenuProps {
+  onTitleClick?: () => void;
+}
+
+const TopMenu: React.FC<TopMenuProps> = ({ onTitleClick }) => {
+  // ✅ CORRECTION: z-30 pour que le TopMenu soit au-dessus de tout
   return (
-    <header className="bg-blue-600 text-white h-16 flex items-center justify-between px-6 shadow-md fixed top-0 left-0 right-0 z-10">
+    <header className="bg-blue-600 text-white h-16 flex items-center justify-between px-6 shadow-md fixed top-0 left-0 right-0 z-30">
       <div className="flex items-center space-x-4">
-        <h1 className="text-xl font-bold">Card Paper Browser</h1>
+        <h1 
+          className="text-xl font-bold cursor-pointer hover:text-blue-200 transition-colors"
+          onClick={onTitleClick}
+          title="Retour à l'accueil"
+        >
+          Card Paper Browser
+        </h1>
       </div>
       
       <div className="flex items-center space-x-4">

@@ -178,3 +178,8 @@
 .double-click-hint {
   transition: opacity 0.2s ease-in-out;
 }
+
+[contentEditable] {
+  direction: ltr;
+  unicode-bidi: bidi-override;
+}

@@ -1,5 +1,5 @@
-// commands/ListBlock.tsx
-import React, { useRef, useEffect, useState } from 'react';
+// components/commands/ListBlock.tsx - VERSION CORRIGEE avec logique originale
+import React, { useRef, useEffect, useState, useCallback } from 'react';
 import type { ListBlockProps } from '../../types/BlockTypes';
 
 export const ListBlock: React.FC<ListBlockProps> = ({ 
@@ -29,7 +29,7 @@ export const ListBlock: React.FC<ListBlockProps> = ({
     updateContent(block.id, items.join('\n'));
   }, [items, block.id, updateContent]);
 
-  const handleKeyDown = (e: React.KeyboardEvent<HTMLDivElement>, index: number) => {
+  const handleKeyDown = useCallback((e: React.KeyboardEvent<HTMLDivElement>, index: number) => {
     const selection = window.getSelection();
     const cursorAtStart = selection !== null && 
       selection.rangeCount > 0 && 
@@ -113,62 +113,49 @@ export const ListBlock: React.FC<ListBlockProps> = ({
       e.preventDefault();
       // Future implémentation : indentation des listes
     }
-  };
+  }, [items, block.id, onSlashCommand, onEnter, onDelete]);
 
-  const handleInput = (e: React.FormEvent<HTMLDivElement>, index: number) => {
+  const handleInput = useCallback((e: React.FormEvent<HTMLDivElement>, index: number) => {
     const target = e.currentTarget;
     const content = target.textContent || '';
+    
+    // Mettre à jour l'item dans la liste
     const newItems = [...items];
     newItems[index] = content;
     setItems(newItems);
-    
-    if (content === '/') {
-      const rect = target.getBoundingClientRect();
-      const position = {
-        top: rect.bottom + window.scrollY + 5,
-        left: rect.left + window.scrollX
-      };
-      onSlashCommand(block.id, position);
-    }
-  };
+  }, [items]);
 
-  const handlePaste = (e: React.ClipboardEvent<HTMLDivElement>, index: number) => {
+  const handlePaste = useCallback((e: React.ClipboardEvent<HTMLDivElement>, index: number) => {
     e.preventDefault();
     const text = e.clipboardData.getData('text/plain');
-    const pastedItems = text.split('\n');
+    const selection = window.getSelection();
     
-    if (pastedItems.length > 1) {
-      // Si on colle plusieurs lignes, créer plusieurs éléments de liste
-      const newItems = [...items];
-      newItems.splice(index, 1, ...pastedItems);
-      setItems(newItems);
-    } else {
-      // Sinon, coller normalement
-      const selection = window.getSelection();
-      if (!selection || !selection.rangeCount) return;
-      
-      selection.deleteFromDocument();
-      const range = selection.getRangeAt(0);
-      const textNode = document.createTextNode(text);
-      range.insertNode(textNode);
-      
-      const target = e.currentTarget;
-      const newItems = [...items];
-      newItems[index] = target.textContent || '';
-      setItems(newItems);
-    }
-  };
+    if (!selection || !selection.rangeCount) return;
+    
+    selection.deleteFromDocument();
+    const range = selection.getRangeAt(0);
+    const textNode = document.createTextNode(text);
+    range.insertNode(textNode);
+    
+    range.setStartAfter(textNode);
+    range.setEndAfter(textNode);
+    selection.removeAllRanges();
+    selection.addRange(range);
+    
+    // Mettre à jour l'item
+    const target = e.currentTarget;
+    const newItems = [...items];
+    newItems[index] = target.textContent || '';
+    setItems(newItems);
+  }, [items]);
 
   const getListMarker = (index: number): string => {
-    if (isOrdered) {
-      return `${index + 1}.`;
-    }
-    return '•';
+    return isOrdered ? `${index + 1}.` : '•';
   };
 
   return (
-    <div className="group relative" ref={contentRef}>
-      <div className="space-y-1">
+    <div className="group relative">
+      <div ref={contentRef} className="space-y-1">
         {items.map((item, index) => (
           <div key={index} className="flex items-start gap-2 relative">
             <span className="text-gray-400 select-none pt-1 w-6 text-right flex-shrink-0">
@@ -181,13 +168,24 @@ export const ListBlock: React.FC<ListBlockProps> = ({
               onInput={(e) => handleInput(e, index)}
               onPaste={(e) => handlePaste(e, index)}
               data-list-item={index}
-              className="flex-1 outline-none py-1 px-2 min-h-[1.5rem] hover:bg-gray-50 rounded transition-colors"
-              dangerouslySetInnerHTML={{ 
-                __html: item || '' 
+              className="flex-1 outline-none py-1 px-2 min-h-[1.5rem] hover:bg-gray-50 rounded transition-colors focus:bg-blue-50"
+              style={{
+                direction: 'ltr',
+                unicodeBidi: 'normal',
+                textAlign: 'left'
+              }}
+              // On utilise une ref callback pour synchroniser le contenu
+              ref={(el) => {
+                if (el && el.textContent !== item) {
+                  el.textContent = item;
+                }
               }}
             />
             {item === '' && (
-              <div className="absolute left-8 top-1 pointer-events-none text-gray-400">
+              <div 
+                className="absolute left-8 top-1 pointer-events-none text-gray-400 select-none"
+                style={{ direction: 'ltr' }}
+              >
                 Élément de liste
               </div>
             )}
@@ -200,6 +198,7 @@ export const ListBlock: React.FC<ListBlockProps> = ({
         <button 
           className="p-1 hover:bg-gray-200 rounded text-gray-400"
           aria-label="Déplacer le bloc"
+          onClick={(e) => e.preventDefault()}
         >
           <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
             <path d="M7 2a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0zM17 10a2 2 0 11-4 0 2 2 0 014 0zM7 18a2 2 0 11-4 0 2 2 0 014 0zM17 18a2 2 0 11-4 0 2 2 0 014 0zM17 2a2 2 0 11-4 0 2 2 0 014 0z"/>

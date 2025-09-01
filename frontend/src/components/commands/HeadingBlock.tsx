@@ -1,4 +1,4 @@
-// commands/HeadingBlock.tsx
+// components/commands/HeadingBlock.tsx - Votre version originale SANS dangerouslySetInnerHTML
 import React, { useRef, useEffect } from 'react';
 import type { HeadingBlockProps } from '../../types/BlockTypes';
 
@@ -15,6 +15,11 @@ export const HeadingBlock: React.FC<HeadingBlockProps> = ({
   useEffect(() => {
     if (block.content === '' && contentRef.current) {
       contentRef.current.focus();
+    }
+    
+    // Synchroniser le contenu sans dangerouslySetInnerHTML
+    if (contentRef.current && contentRef.current.textContent !== block.content) {
+      contentRef.current.textContent = block.content || '';
     }
   }, [block.content]);
 
@@ -123,9 +128,12 @@ export const HeadingBlock: React.FC<HeadingBlockProps> = ({
         onPaste={handlePaste}
         data-block-id={block.id}
         className={`outline-none px-2 hover:bg-gray-50 rounded transition-colors ${getHeadingStyles()}`}
-        dangerouslySetInnerHTML={{ 
-          __html: block.content || '' 
+        style={{
+          direction: 'ltr',
+          unicodeBidi: 'normal',
+          textAlign: 'left'
         }}
+        // SUPPRIME: dangerouslySetInnerHTML - maintenant géré dans useEffect
       />
       
       {block.content === '' && (

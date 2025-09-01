@@ -1,7 +1,24 @@
+// frontend/src/components/AddPaper.tsx - Version corrigée basée sur GitHub
 import React, { useState, useEffect } from 'react';
 import { paperService } from '../services/paperService';
 import { useToast } from '../contexts/ToastContext';
+import ImageSelectionModal from './ImageSelectionModal';
 import type { PaperData, Category } from '../types/Paper';
+
+interface ExtractedImage {
+  id: string;
+  name: string;
+  url: string;
+  page: number;
+  width?: number;
+  height?: number;
+  buffer?: Buffer;
+}
+
+// ✅ Interface temporaire pour la sauvegarde avec catégories comme IDs
+interface PaperDataForSave extends Omit<PaperData, 'categories'> {
+  categories?: number[]; // IDs des catégories au lieu d'objets Category
+}
 
 interface AddPaperProps {
   onClose?: () => void;
@@ -25,91 +42,87 @@ const AddPaper: React.FC<AddPaperProps> = ({ onClose, onSave }) => {
   });
   const [showForm, setShowForm] = useState(false);
   const [imageFile, setImageFile] = useState<File | null>(null);
-  const [extractedImages, setExtractedImages] = useState<any[]>([]);
+  const [extractedImages, setExtractedImages] = useState<ExtractedImage[]>([]);
+  const [selectedImages, setSelectedImages] = useState<ExtractedImage[]>([]);
   const [showImageSelection, setShowImageSelection] = useState(false);
 
-  // États pour les catégories
-  const [categories, setCategories] = useState<Category[]>([]);
-  const [selectedCategories, setSelectedCategories] = useState<number[]>([]);
-  const [newCategoryName, setNewCategoryName] = useState('');
-  const [showNewCategoryInput, setShowNewCategoryInput] = useState(false);
-  const [isCreatingCategory, setIsCreatingCategory] = useState(false);
+  // États pour les tags (anciennement catégories)
+  const [tags, setTags] = useState<Category[]>([]);
+  const [selectedTags, setSelectedTags] = useState<number[]>([]);
+  const [newTagName, setNewTagName] = useState('');
+  const [showNewTagInput, setShowNewTagInput] = useState(false);
+  const [isCreatingTag, setIsCreatingTag] = useState(false);
 
   // Utilisation du système de toasts
   const { success, error: showError, warning, info } = useToast();
 
-  // Charger les catégories au montage du composant
+  // Charger les tags au montage du composant
   useEffect(() => {
-    loadCategories();
+    loadTags();
   }, []);
 
-  const loadCategories = async () => {
+  const loadTags = async () => {
     try {
-      const categoriesList = await paperService.getAllCategories();
-      setCategories(categoriesList);
+      const tagsList = await paperService.getAllCategories(); // API reste "categories" mais on appelle ça "tags"
+      setTags(tagsList);
     } catch (error) {
-      console.error('Erreur lors du chargement des catégories:', error);
-      showError('Erreur lors du chargement des catégories', 'Erreur');
+      console.error('Erreur lors du chargement des tags:', error);
+      showError('Erreur lors du chargement des tags', 'Erreur');
     }
   };
 
   // Fonction pour extraire le DOI depuis une URL
-const extractDoiFromUrl = (url: string): string => {
-  try {
-    const doiPatterns = [
-      /doi\.org\/(.+?)(?:\?|$)/,
-      /dx\.doi\.org\/(.+?)(?:\?|$)/,
-      /doi\/pdf\/(.+?)(?:\?|$)/,
-      /doi\/abs\/(.+?)(?:\?|$)/,
-      /\/([0-9]{2}\.[0-9]{4,}\/[-._;()\/:a-zA-Z0-9]+)/
-    ];
+  const extractDoiFromUrl = (url: string): string => {
+    try {
+      const doiPatterns = [
+        /doi\.org\/(.+?)(?:\?|$)/,
+        /dx\.doi\.org\/(.+?)(?:\?|$)/,
+        /doi\/pdf\/(.+?)(?:\?|$)/,
+        /doi\/abs\/(.+?)(?:\?|$)/,
+        /\/([0-9]{2}\.[0-9]{4,}\/[-._;()\/:a-zA-Z0-9]+)/
+      ];
 
-    for (const pattern of doiPatterns) {
-      const match = url.match(pattern);
-      if (match && match[1]) {
-        return match[1];
+      for (const pattern of doiPatterns) {
+        const match = url.match(pattern);
+        if (match && match[1]) {
+          return match[1];
+        }
       }
+      
+      const doiPattern = /^10\.[0-9]{4,}\/[-._;()\/:a-zA-Z0-9]+$/;
+      if (doiPattern.test(url)) {
+        return url;
+      }
+      
+      return '';
+    } catch (error) {
+      console.error('Erreur lors de l\'extraction du DOI:', error);
+      return '';
     }
-    
-    const doiPattern = /^10\.[0-9]{4,}\/[-._;()\/:a-zA-Z0-9]+$/;
-    if (doiPattern.test(url)) {
-      return url;
-    }
-    
-    return '';
-  } catch (error) {
-    console.error('Erreur lors de l\'extraction du DOI:', error);
-    return '';
-  }
-};
+  };
 
   // Récupération des métadonnées via DOI
   const fetchMetadataFromDoi = async (doi: string): Promise<PaperData> => {
-  try {
-    const response = await paperService.getMetadataFromDOI(doi);
-    return response.paperData;
-  } catch (error) {
-    throw error;
-  }
-};
-
-  // Extraction des images depuis un PDF
-  const extractImagesFromPdf = async (file: File): Promise<any[]> => {
     try {
-      const formData = new FormData();
-      formData.append('pdf', file);
+      const response = await paperService.getMetadataFromDOI(doi);
+      return response.paperData;
+    } catch (error) {
+      throw error;
+    }
+  };
 
-      const response = await fetch('http://localhost:5324/api/papers/extract-images', {
-        method: 'POST',
-        body: formData,
-      });
-
-      if (!response.ok) {
-        throw new Error('Erreur lors de l\'extraction des images');
-      }
-
-      const data = await response.json();
-      return data.images || [];
+  // Extraction des images depuis un PDF  
+  const extractImagesFromPdf = async (file: File): Promise<ExtractedImage[]> => {
+    try {
+      // ✅ Utiliser le service existant
+      const response = await paperService.extractImagesFromPDF(file);
+      const images = response.images || [];
+      
+      // Ajouter des IDs uniques pour la sélection
+      return images.map((img: any, index: number) => ({
+        ...img,
+        id: `extracted-${index}-${Date.now()}`
+      }));
     } catch (error) {
       console.error('Erreur lors de l\'extraction des images:', error);
       throw error;
@@ -120,11 +133,21 @@ const extractDoiFromUrl = (url: string): string => {
     try {
       console.log('📄 Extraction métadonnées du PDF:', file.name);
       
-      // ✅ Utiliser extractDataFromPDF qui retourne { paperData: ... }
-      const response = await paperService.extractDataFromPDF(file);
-      
-      // ✅ Le service retourne { paperData: PaperData }
-      const metadata = response.paperData;
+      // ✅ URL relative si proxy Vite configuré, sinon URL complète
+      const formData = new FormData();
+      formData.append('pdf', file);
+
+      const response = await fetch('/api/papers/extract-from-pdf', {
+        method: 'POST',
+        body: formData,
+      });
+
+      if (!response.ok) {
+        throw new Error('Erreur lors de l\'extraction des métadonnées');
+      }
+
+      const data = await response.json();
+      const metadata = data.paperData;
       
       console.log('✅ Métadonnées extraites:', metadata);
       return metadata;
@@ -135,41 +158,41 @@ const extractDoiFromUrl = (url: string): string => {
     }
   };
 
-  // Créer une nouvelle catégorie
-  const handleCreateCategory = async () => {
-    if (!newCategoryName.trim()) return;
+  // Créer un nouveau tag
+  const handleCreateTag = async () => {
+    if (!newTagName.trim()) return;
     
-    setIsCreatingCategory(true);
+    setIsCreatingTag(true);
     try {
-      const result = await paperService.createCategory(newCategoryName.trim());
+      const result = await paperService.createCategory(newTagName.trim());
       
-      // Recharger les catégories
-      await loadCategories();
+      // Recharger les tags
+      await loadTags();
       
-      // Sélectionner automatiquement la nouvelle catégorie
-      setSelectedCategories(prev => [...prev, result.id]);
+      // Sélectionner automatiquement le nouveau tag
+      setSelectedTags(prev => [...prev, result.id]);
       
       // Réinitialiser le formulaire de création
-      setNewCategoryName('');
-      setShowNewCategoryInput(false);
+      setNewTagName('');
+      setShowNewTagInput(false);
       
-      success(`Catégorie "${newCategoryName}" créée avec succès`, 'Succès');
+      success(`Tag "${newTagName}" créé avec succès`, 'Succès');
       
     } catch (error) {
-      console.error('Erreur lors de la création de la catégorie:', error);
+      console.error('Erreur lors de la création du tag:', error);
       const errorMessage = error instanceof Error ? error.message : 'Erreur inconnue';
-      showError(`Erreur lors de la création de la catégorie: ${errorMessage}`, 'Erreur');
+      showError(`Erreur lors de la création du tag: ${errorMessage}`, 'Erreur');
     } finally {
-      setIsCreatingCategory(false);
+      setIsCreatingTag(false);
     }
   };
 
-  // Gérer la sélection des catégories
-  const toggleCategory = (categoryId: number) => {
-    setSelectedCategories(prev => 
-      prev.includes(categoryId)
-        ? prev.filter(id => id !== categoryId)
-        : [...prev, categoryId]
+  // Gérer la sélection des tags
+  const toggleTag = (tagId: number) => {
+    setSelectedTags(prev => 
+      prev.includes(tagId)
+        ? prev.filter(id => id !== tagId)
+        : [...prev, tagId]
     );
   };
 
@@ -246,6 +269,16 @@ const extractDoiFromUrl = (url: string): string => {
     }
   };
 
+  // Gérer la sélection d'images
+  const handleImageSelection = (images: ExtractedImage[]) => {
+    setSelectedImages(images);
+    setShowImageSelection(false);
+    
+    if (images.length > 0) {
+      success(`${images.length} image${images.length > 1 ? 's' : ''} sélectionnée${images.length > 1 ? 's' : ''} pour sauvegarde`, 'Sélection');
+    }
+  };
+
   const handleSavePaper = async () => {
     try {
       setIsLoading(true);
@@ -256,38 +289,86 @@ const extractDoiFromUrl = (url: string): string => {
         return;
       }
       
-      info('Sauvegarde en cours...', 'Traitement');
+      info('Création de l\'article en cours...', 'Traitement');
       
-      // Upload de l'image si présente
-      let imageUrl = paperData.image;
+      // Préparer les données pour l'API incluant PDF et images sélectionnées
+      const formData = new FormData();
+      
+      // Ajouter les données du paper
+      Object.entries(paperData).forEach(([key, value]) => {
+        if (value) {
+          formData.append(key, value.toString());
+        }
+      });
+
+      // Ajouter les tags sélectionnés
+      if (selectedTags.length > 0) {
+        formData.append('categories', JSON.stringify(selectedTags)); // API reste "categories"
+      }
+
+      // Ajouter le PDF si présent
+      if (pdfFile) {
+        formData.append('pdf', pdfFile);
+      }
+
+      // Ajouter les images sélectionnées
+      if (selectedImages.length > 0) {
+        formData.append('selectedImages', JSON.stringify(selectedImages));
+      }
+
+      // Ajouter l'image de couverture personnalisée si présente
       if (imageFile) {
-        console.log('Upload de l\'image personnalisée...');
-        imageUrl = await paperService.uploadImage(imageFile);
-        console.log('Image uploadée:', imageUrl);
+        formData.append('coverImage', imageFile);
+      }
+
+      // Utiliser la nouvelle API complète ou l'ancienne selon disponibilité
+      let result;
+      try {
+        const response = await fetch('/api/papers/create-complete', {
+          method: 'POST',
+          body: formData
+        });
+
+        if (!response.ok) {
+          throw new Error(`Erreur HTTP: ${response.status}`);
+        }
+
+        result = await response.json();
+      } catch (error) {
+        // Fallback vers l'ancienne méthode si la nouvelle API n'existe pas
+        console.log('Utilisation de l\'ancienne API de sauvegarde');
+        
+        // ✅ Créer un objet PaperData correct sans categories comme array de nombres
+        const paperToSave: PaperData = {
+          ...paperData,
+          // Ne pas inclure categories ici, l'API les gère séparément
+        };
+        
+        // ✅ Utiliser savePaper avec les catégories comme paramètre séparé si supporté
+        result = await paperService.savePaper(paperToSave);
       }
       
-      // Sauvegarder le papier avec l'URL de l'image et les catégories
-      const paperToSave: any = {
-        ...paperData,
-        image: imageUrl,
-        categories: selectedCategories
-      };
-      
-      console.log('Sauvegarde du paper:', paperToSave);
-      const result = await paperService.savePaper(paperToSave as PaperData);
-      console.log('Article sauvegardé avec l\'ID:', result.id);
-      
-      // Callback vers le parent si fourni
-      if (onSave) {
+      console.log('Article créé:', result);
+
+      // Callback vers le parent
+      if (onSave && result.paper) {
         onSave(result.paper);
       }
-      
-      // Message de succès
-      success(`Article "${paperData.title}" ajouté avec succès !`, 'Succès', 7000);
+
+      // Message de succès détaillé
+      const successMessage = [
+        `Article "${paperData.title}" créé avec succès !`,
+        result.folderName ? `📁 Dossier: ${result.folderName}` : '',
+        pdfFile ? `📄 PDF sauvegardé` : '',
+        selectedImages.length > 0 ? `🖼️ ${selectedImages.length} images sauvegardées` : ''
+      ].filter(Boolean).join('\n');
+
+      success(successMessage, 'Création réussie', 7000);
       
       // Réinitialiser le formulaire après un délai
       setTimeout(() => {
         resetForm();
+        if (onClose) onClose();
       }, 2000);
       
     } catch (error) {
@@ -315,44 +396,32 @@ const extractDoiFromUrl = (url: string): string => {
     setPdfFile(null);
     setImageFile(null);
     setExtractedImages([]);
+    setSelectedImages([]);
     setShowImageSelection(false);
-    setSelectedCategories([]);
-    setNewCategoryName('');
-    setShowNewCategoryInput(false);
+    setSelectedTags([]);
+    setNewTagName('');
+    setShowNewTagInput(false);
   };
 
   const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
       setImageFile(file);
-      // Créer une URL temporaire pour l'aperçu
-      const imageUrl = URL.createObjectURL(file);
-      setPaperData((prev: PaperData) => ({ ...prev, image: imageUrl }));
-    }
-  };
-
-  const getStatusColor = (status: string) => {
-    switch (status) {
-      case 'non_lu': return 'bg-red-500 hover:bg-red-600';
-      case 'en_cours': return 'bg-yellow-500 hover:bg-yellow-600';
-      case 'lu': return 'bg-green-500 hover:bg-green-600';
-      default: return 'bg-gray-500 hover:bg-gray-600';
-    }
-  };
-
-  const getStatusText = (status: string) => {
-    switch (status) {
-      case 'non_lu': return 'Pas Lu';
-      case 'en_cours': return 'En cours';
-      case 'lu': return 'Lu';
-      default: return status;
     }
   };
 
   return (
-    <div className="p-6 bg-white">
-      <div className="mb-6">
-        <h2 className="text-2xl font-bold text-gray-800">Ajouter un article</h2>
+    <div className="max-w-4xl mx-auto bg-white rounded-lg shadow-lg p-8">
+      <div className="flex items-center justify-between mb-8">
+        <h2 className="text-3xl font-bold text-gray-800">Ajouter un nouvel article</h2>
+        {onClose && (
+          <button
+            onClick={onClose}
+            className="text-gray-500 hover:text-gray-700 text-2xl"
+          >
+            ×
+          </button>
+        )}
       </div>
 
       {!showForm ? (
@@ -389,7 +458,7 @@ const extractDoiFromUrl = (url: string): string => {
           {inputMethod === 'doi' && (
             <div className="mb-6">
               <label className="block text-sm font-medium text-gray-700 mb-2">
-                Entrez le DOI
+                Entrez le DOI ou l'URL de l'article
               </label>
               <div className="flex space-x-3">
                 <input
@@ -423,19 +492,19 @@ const extractDoiFromUrl = (url: string): string => {
                     type="file"
                     accept=".pdf"
                     onChange={(e) => setPdfFile(e.target.files?.[0] || null)}
-                    className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                     disabled={isLoading}
                   />
                   {pdfFile && (
-                    <p className="mt-2 text-sm text-gray-600">
-                      Fichier sélectionné: {pdfFile.name}
+                    <p className="mt-1 text-sm text-green-600">
+                      ✓ {pdfFile.name} ({Math.round(pdfFile.size / 1024)} KB)
                     </p>
                   )}
                 </div>
                 <button
                   onClick={handlePdfSubmit}
                   disabled={isLoading || !pdfFile}
-                  className="px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                  className="px-6 py-3 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   {isLoading ? 'Extraction...' : 'Extraire'}
                 </button>
@@ -470,11 +539,11 @@ const extractDoiFromUrl = (url: string): string => {
               </div>
               <div>
                 <span className="font-medium text-gray-700">Conférence:</span>
-                <span className="ml-2 text-gray-600">{paperData.conference}</span>
+                <span className="ml-2 text-gray-600">{paperData.conference || 'Non spécifiée'}</span>
               </div>
               <div>
                 <span className="font-medium text-gray-700">Date:</span>
-                <span className="ml-2 text-gray-600">{paperData.publication_date}</span>
+                <span className="ml-2 text-gray-600">{paperData.publication_date || 'Non spécifiée'}</span>
               </div>
             </div>
             <div className="mt-3">
@@ -489,213 +558,235 @@ const extractDoiFromUrl = (url: string): string => {
             </div>
           </div>
 
-          {/* Sélection des catégories */}
+          {/* Champs éditables */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Titre *
+              </label>
+              <input
+                type="text"
+                value={paperData.title}
+                onChange={(e) => setPaperData(prev => ({ ...prev, title: e.target.value }))}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                required
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Auteurs *
+              </label>
+              <input
+                type="text"
+                value={paperData.authors}
+                onChange={(e) => setPaperData(prev => ({ ...prev, authors: e.target.value }))}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                required
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                DOI *
+              </label>
+              <input
+                type="text"
+                value={paperData.doi}
+                onChange={(e) => setPaperData(prev => ({ ...prev, doi: e.target.value }))}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                required
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Conférence
+              </label>
+              <input
+                type="text"
+                value={paperData.conference || ''}
+                onChange={(e) => setPaperData(prev => ({ ...prev, conference: e.target.value }))}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Date de publication
+              </label>
+              <input
+                type="date"
+                value={paperData.publication_date || ''}
+                onChange={(e) => setPaperData(prev => ({ ...prev, publication_date: e.target.value }))}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                URL *
+              </label>
+              <input
+                type="url"
+                value={paperData.url}
+                onChange={(e) => setPaperData(prev => ({ ...prev, url: e.target.value }))}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                required
+              />
+            </div>
+          </div>
+
+          {/* Images extraites du PDF */}
+          {extractedImages.length > 0 && (
+            <div className="bg-green-50 border border-green-200 rounded-lg p-4">
+              <div className="flex items-center justify-between mb-3">
+                <h4 className="font-medium text-green-900">
+                  Images extraites du PDF ({extractedImages.length})
+                </h4>
+                <button
+                  type="button"
+                  onClick={() => setShowImageSelection(true)}
+                  className="text-sm px-3 py-1 bg-green-600 text-white rounded hover:bg-green-700"
+                >
+                  Sélectionner images
+                </button>
+              </div>
+              
+              {selectedImages.length > 0 && (
+                <div className="text-sm text-green-800">
+                  ✅ {selectedImages.length} image{selectedImages.length > 1 ? 's' : ''} sélectionnée{selectedImages.length > 1 ? 's' : ''} 
+                  pour sauvegarde dans pdf-images/
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Sélection des tags */}
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-3">
-              Catégories
+              Tags
             </label>
             
-            {/* Catégories existantes */}
+            {/* Tags existants */}
             <div className="mb-4">
               <div className="flex flex-wrap gap-2 mb-3">
-                {categories.map((category) => (
+                {tags.map((tag) => (
                   <button
-                    key={category.id}
-                    onClick={() => toggleCategory(category.id)}
+                    key={tag.id}
+                    onClick={() => toggleTag(tag.id)}
                     className={`px-3 py-2 rounded-full text-sm font-medium transition-colors ${
-                      selectedCategories.includes(category.id)
+                      selectedTags.includes(tag.id)
                         ? 'bg-blue-600 text-white'
                         : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
                     }`}
                   >
-                    {category.name}
+                    {tag.name}
                   </button>
                 ))}
               </div>
-              
-              {/* Bouton pour créer une nouvelle catégorie */}
-              {!showNewCategoryInput ? (
+
+              {/* Bouton ajouter nouveau tag */}
+              {!showNewTagInput ? (
                 <button
-                  onClick={() => setShowNewCategoryInput(true)}
-                  className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 text-sm font-medium"
+                  onClick={() => setShowNewTagInput(true)}
+                  className="px-3 py-2 border-2 border-dashed border-gray-300 rounded-full text-sm text-gray-600 hover:border-blue-400 hover:text-blue-600 transition-colors"
                 >
-                  + Créer une nouvelle catégorie
+                  + Nouveau tag
                 </button>
               ) : (
-                <div className="flex space-x-3 items-end">
-                  <div className="flex-1">
-                    <input
-                      type="text"
-                      value={newCategoryName}
-                      onChange={(e) => setNewCategoryName(e.target.value)}
-                      placeholder="Nom de la nouvelle catégorie"
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
-                      onKeyPress={(e) => e.key === 'Enter' && handleCreateCategory()}
-                    />
-                  </div>
+                <div className="flex items-center space-x-2">
+                  <input
+                    type="text"
+                    value={newTagName}
+                    onChange={(e) => setNewTagName(e.target.value)}
+                    placeholder="Nom du tag"
+                    className="px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        handleCreateTag();
+                      } else if (e.key === 'Escape') {
+                        setShowNewTagInput(false);
+                        setNewTagName('');
+                      }
+                    }}
+                    autoFocus
+                  />
                   <button
-                    onClick={handleCreateCategory}
-                    disabled={isCreatingCategory || !newCategoryName.trim()}
-                    className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                    onClick={handleCreateTag}
+                    disabled={!newTagName.trim() || isCreatingTag}
+                    className="px-3 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50 text-sm"
                   >
-                    {isCreatingCategory ? 'Création...' : 'Créer'}
+                    {isCreatingTag ? '...' : 'Créer'}
                   </button>
                   <button
                     onClick={() => {
-                      setShowNewCategoryInput(false);
-                      setNewCategoryName('');
+                      setShowNewTagInput(false);
+                      setNewTagName('');
                     }}
-                    className="px-4 py-2 bg-gray-500 text-white rounded-lg hover:bg-gray-600"
+                    className="px-3 py-2 bg-gray-300 text-gray-700 rounded-lg hover:bg-gray-400 text-sm"
                   >
                     Annuler
                   </button>
                 </div>
               )}
             </div>
-            
-            {selectedCategories.length > 0 && (
-              <p className="text-sm text-gray-600">
-                {selectedCategories.length} catégorie(s) sélectionnée(s)
+          </div>
+
+          {/* Image de couverture */}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              Image de couverture (optionnelle)
+            </label>
+            <input
+              type="file"
+              accept="image/*"
+              onChange={handleImageUpload}
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+            />
+            {imageFile && (
+              <p className="mt-1 text-sm text-green-600">
+                ✓ {imageFile.name}
               </p>
             )}
           </div>
 
-          {/* Sélection d'image */}
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-3">
-              Image de l'article
-            </label>
-            
-            {/* Toggle entre images extraites et upload personnalisé */}
-            {extractedImages.length > 0 && (
-              <div className="mb-4">
-                <div className="flex space-x-4 mb-3">
-                  <button
-                    onClick={() => setShowImageSelection(true)}
-                    className={`px-4 py-2 rounded-lg font-medium transition-colors ${
-                      showImageSelection 
-                        ? 'bg-blue-600 text-white' 
-                        : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
-                    }`}
-                  >
-                    Images du PDF ({extractedImages.length})
-                  </button>
-                  <button
-                    onClick={() => setShowImageSelection(false)}
-                    className={`px-4 py-2 rounded-lg font-medium transition-colors ${
-                      !showImageSelection 
-                        ? 'bg-blue-600 text-white' 
-                        : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
-                    }`}
-                  >
-                    Upload personnalisé
-                  </button>
-                </div>
-              </div>
-            )}
-
-            {/* Images extraites du PDF */}
-            {showImageSelection && extractedImages.length > 0 && (
-              <div className="mb-4">
-                <p className="text-sm text-gray-600 mb-3">
-                  Sélectionnez une image extraite du PDF :
-                </p>
-                <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3 max-h-64 overflow-y-auto">
-                  {extractedImages.map((img, index) => (
-                    <div key={index} className="relative group">
-                      <div
-                        className={`cursor-pointer border-2 rounded-lg overflow-hidden transition-all ${
-                          paperData.image === img.url
-                            ? 'border-blue-500 ring-2 ring-blue-200'
-                            : 'border-gray-200 hover:border-blue-300'
-                        }`}
-                        onClick={() => {
-                          setPaperData(prev => ({ ...prev, image: img.url }));
-                          setImageFile(null); // Reset custom upload
-                        }}
-                      >
-                        <img
-                          src={img.url}
-                          alt={`Image page ${img.page}`}
-                          className="w-full h-20 object-cover"
-                        />
-                        <div className="absolute bottom-0 left-0 right-0 bg-black bg-opacity-50 text-white text-xs p-1 text-center">
-                          Page {img.page}
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {/* Upload d'image personnalisé */}
-            {(!showImageSelection || extractedImages.length === 0) && (
-              <div className="mb-4">
-                <input
-                  type="file"
-                  accept="image/*"
-                  onChange={handleImageUpload}
-                  className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                />
-              </div>
-            )}
-
-            {/* Aperçu de l'image sélectionnée */}
-            {paperData.image && (
-              <div className="mt-3">
-                <p className="text-sm text-gray-600 mb-2">Aperçu :</p>
-                <img
-                  src={paperData.image}
-                  alt="Aperçu"
-                  className="max-w-xs h-48 object-cover rounded-lg border"
-                />
-              </div>
-            )}
-          </div>
-
-          {/* Sélection du statut de lecture */}
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-3">
-              Statut de Lecture
-            </label>
-            <div className="flex space-x-3">
-              {(['non_lu', 'en_cours', 'lu'] as const).map((status) => (
-                <button
-                  key={status}
-                  onClick={() => setPaperData((prev: PaperData) => ({ ...prev, reading_status: status }))}
-                  className={`
-                    px-6 py-3 rounded-full text-white font-medium transition-colors
-                    ${paperData.reading_status === status 
-                      ? getStatusColor(status)
-                      : 'bg-gray-300 hover:bg-gray-400'
-                    }
-                  `}
-                >
-                  {getStatusText(status)}
-                </button>
-              ))}
-            </div>
-          </div>
-
           {/* Boutons d'action */}
-          <div className="flex justify-between pt-6 border-t">
+          <div className="flex justify-between">
             <button
-              onClick={() => setShowForm(false)}
-              className="px-6 py-3 bg-gray-500 text-white rounded-lg hover:bg-gray-600"
+              onClick={resetForm}
+              disabled={isLoading}
+              className="px-6 py-2 bg-gray-300 text-gray-700 rounded-lg hover:bg-gray-400 disabled:opacity-50"
             >
-              Retour
+              Recommencer
             </button>
+
             <button
               onClick={handleSavePaper}
-              disabled={isLoading}
-              className="px-8 py-3 bg-orange-600 text-white rounded-lg hover:bg-orange-700 font-medium disabled:opacity-50 disabled:cursor-not-allowed"
+              disabled={isLoading || !paperData.title || !paperData.authors || !paperData.doi || !paperData.url}
+              className="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              {isLoading ? 'SAUVEGARDE...' : 'ENREGISTRER DANS LA BASE DE DONNÉES'}
+              {isLoading ? (
+                <div className="flex items-center">
+                  <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white mr-2"></div>
+                  Sauvegarde...
+                </div>
+              ) : (
+                'Sauvegarder l\'article'
+              )}
             </button>
           </div>
         </div>
       )}
+
+      {/* Modal de sélection d'images */}
+      <ImageSelectionModal
+        isOpen={showImageSelection}
+        images={extractedImages}
+        onClose={() => setShowImageSelection(false)}
+        onSave={handleImageSelection}
+        paperTitle={paperData.title || 'Article sans titre'}
+      />
     </div>
   );
 };

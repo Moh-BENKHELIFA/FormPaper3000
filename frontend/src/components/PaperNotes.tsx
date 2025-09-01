@@ -1,30 +1,22 @@
-// PaperNotes.tsx - Version avec raccourci Ctrl+S
+// frontend/src/components/PaperNotes.tsx - Mis à jour pour le système de fichiers
 import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { FileText, Calendar, Tag, ExternalLink, Plus, Check, Download, Save } from 'lucide-react';
+import { FileText, Calendar, Tag, ExternalLink, Plus, Check, Download, Upload, Save } from 'lucide-react';
 import type { Block, BlockType, Position } from '../types/BlockTypes';
+import type { PaperData } from '../types/Paper';
 import { TextBlock } from './commands/TextBlock';
 import { HeadingBlock } from './commands/HeadingBlock';
 import { ListBlock } from './commands/ListBlock';
 import { ImageBlock } from './commands/ImageBlock';
+import { notesFileStorage } from '../services/notesStorageFile';
+import { useToast } from '../contexts/ToastContext';
 
-// Interface pour les props du papier
-interface PaperInfo {
-  title: string;
-  date: string;
-  tags?: string[];
-  image?: string;
-  pdfUrl?: string;
-}
-
-// Interface pour les props du composant
 interface PaperNotesProps {
-  paper: PaperInfo;
+  paper: PaperData;
   initialBlocks?: Block[];
   onClose: () => void;
   onSave?: (blocks: Block[]) => void;
 }
 
-// Interface pour les commandes
 interface Command {
   name: string;
   command: string;
@@ -55,11 +47,13 @@ const PaperNotes: React.FC<PaperNotesProps> = ({
   const [activeBlockId, setActiveBlockId] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [isSaving, setIsSaving] = useState<boolean>(false);
-  const [lastSaveTime, setLastSaveTime] = useState<Date | null>(null);
-  const [showSaveNotification, setShowSaveNotification] = useState<boolean>(false);
+  const [autoSaveEnabled, setAutoSaveEnabled] = useState<boolean>(true);
   const menuRef = useRef<HTMLDivElement>(null);
+  const imageInputRef = useRef<HTMLInputElement>(null);
 
-  // Commandes disponibles
+  const { success, error: showError, info } = useToast();
+
+  // Commandes disponibles avec upload d'image
   const commands: Command[] = [
     { name: 'Texte', command: '/text', icon: '¶', type: 'text', description: 'Texte simple' },
     { name: 'Paragraphe', command: '/paragraph', icon: '¶', type: 'text', description: 'Bloc de paragraphe' },
@@ -75,24 +69,87 @@ const PaperNotes: React.FC<PaperNotesProps> = ({
   const filteredCommands = searchQuery 
     ? commands.filter(cmd => 
         cmd.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        cmd.command.includes(searchQuery)
+        cmd.command.toLowerCase().includes(searchQuery.toLowerCase())
       )
     : commands;
 
-  // Fonction pour obtenir le placeholder selon le type
-  const getPlaceholderForType = (type: BlockType): string => {
-    switch (type) {
-      case 'h1': return 'Titre principal';
-      case 'h2': return 'Sous-titre';
-      case 'h3': return 'Titre de section';
-      case 'bullet': return 'Élément de liste';
-      case 'list': return 'Élément numéroté';
-      case 'image': return "Entrez l'URL de l'image";
-      default: return "Commencez à écrire ou tapez '/' pour les commandes...";
+  // Auto-sauvegarde toutes les 30 secondes
+  useEffect(() => {
+    if (!autoSaveEnabled) return;
+
+    const interval = setInterval(() => {
+      handleAutoSave();
+    }, 30000); // 30 secondes
+
+    return () => clearInterval(interval);
+  }, [blocks, autoSaveEnabled]);
+
+  // Charger les notes au montage du composant
+  useEffect(() => {
+    loadNotes();
+  }, [paper.id]);
+
+  const loadNotes = async () => {
+    try {
+      const loadedBlocks = await notesFileStorage.loadNotes(paper);
+      if (loadedBlocks && loadedBlocks.length > 0) {
+        setBlocks(loadedBlocks);
+        console.log(`Notes chargées: ${loadedBlocks.length} blocs`);
+      }
+    } catch (error) {
+      console.error('Erreur chargement notes:', error);
+      showError('Erreur lors du chargement des notes', 'Chargement');
     }
   };
 
-  // Gérer la commande slash
+  const handleAutoSave = async () => {
+    if (blocks.length === 0 || (blocks.length === 1 && !blocks[0].content)) {
+      return; // Ne pas sauvegarder si pas de contenu
+    }
+
+    try {
+      await notesFileStorage.saveNotes(paper, blocks);
+      console.log('Auto-sauvegarde réussie');
+    } catch (error) {
+      console.error('Erreur auto-sauvegarde:', error);
+    }
+  };
+
+  const handleManualSave = async () => {
+    try {
+      setIsSaving(true);
+      info('Sauvegarde des notes...', 'Sauvegarde');
+      
+      await notesFileStorage.saveNotes(paper, blocks);
+      
+      success('Notes sauvegardées avec succès !', 'Sauvegarde', 3000);
+      
+      // Callback vers le parent si fourni
+      if (onSave) {
+        onSave(blocks);
+      }
+    } catch (error) {
+      console.error('Erreur sauvegarde manuelle:', error);
+      showError('Erreur lors de la sauvegarde des notes', 'Erreur');
+    } finally {
+      setTimeout(() => setIsSaving(false), 1000);
+    }
+  };
+
+  // Obtenir le placeholder selon le type de bloc
+  const getPlaceholderForType = (type: BlockType): string => {
+    switch (type) {
+      case 'h1': return 'Titre principal...';
+      case 'h2': return 'Sous-titre...';
+      case 'h3': return 'Titre de section...';
+      case 'bullet': return 'Élément de liste...';
+      case 'list': return '1. Premier élément...';
+      case 'image': return 'Cliquez pour importer une image...';
+      default: return 'Tapez \'/\' pour les commandes...';
+    }
+  };
+
+  // Gérer les commandes slash
   const handleSlashCommand = useCallback((blockId: string, position: Position): void => {
     setActiveBlockId(blockId);
     setSlashMenuPosition(position);
@@ -103,23 +160,78 @@ const PaperNotes: React.FC<PaperNotesProps> = ({
   // Sélectionner une commande
   const selectCommand = useCallback((type: BlockType): void => {
     if (activeBlockId) {
-      setBlocks(prevBlocks =>
-        prevBlocks.map(block =>
-          block.id === activeBlockId
-            ? { 
-                ...block, 
-                type, 
-                content: block.content.replace(/\/$/, ''), 
-                placeholder: getPlaceholderForType(type) 
-              }
-            : block
-        )
-      );
+      if (type === 'image') {
+        // Pour les images, déclencher l'upload
+        triggerImageUpload(activeBlockId);
+      } else {
+        // Pour les autres types
+        setBlocks(prevBlocks => 
+          prevBlocks.map(block => 
+            block.id === activeBlockId 
+              ? { 
+                  ...block, 
+                  type, 
+                  content: block.content.replace(/\/$/, ''), 
+                  placeholder: getPlaceholderForType(type) 
+                }
+              : block
+          )
+        );
+      }
     }
     setShowSlashMenu(false);
     setSearchQuery('');
     setActiveBlockId(null);
   }, [activeBlockId]);
+
+  // Déclencher l'upload d'image
+  const triggerImageUpload = (blockId: string) => {
+    if (imageInputRef.current) {
+      imageInputRef.current.dataset.blockId = blockId;
+      imageInputRef.current.click();
+    }
+  };
+
+  // Gérer l'upload d'image
+  const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    const blockId = e.target.dataset.blockId;
+    
+    if (!file || !blockId) return;
+
+    try {
+      info('Upload de l\'image...', 'Upload');
+      
+      // Sauvegarder l'image dans le dossier du paper
+      const relativePath = await notesFileStorage.saveImportedImage(paper, file);
+      
+      // Créer l'URL complète pour affichage
+      const imageUrl = notesFileStorage.getImageUrl(paper, relativePath);
+      
+      // Mettre à jour le bloc avec l'URL de l'image
+      setBlocks(prevBlocks =>
+        prevBlocks.map(block =>
+          block.id === blockId
+            ? {
+                ...block,
+                type: 'image',
+                content: imageUrl,
+                placeholder: ''
+              }
+            : block
+        )
+      );
+
+      success('Image importée et sauvegardée !', 'Upload', 3000);
+      
+    } catch (error) {
+      console.error('Erreur upload image:', error);
+      showError('Erreur lors de l\'import de l\'image', 'Upload');
+    }
+    
+    // Réinitialiser l'input
+    e.target.value = '';
+  };
 
   // Mettre à jour le contenu d'un bloc
   const updateBlockContent = useCallback((blockId: string, content: string): void => {
@@ -164,115 +276,29 @@ const PaperNotes: React.FC<PaperNotesProps> = ({
     });
   }, []);
 
-  // ✅ AJOUT: Sauvegarder manuellement avec feedback visuel amélioré
-  const handleSave = useCallback(() => {
-    if (onSave) {
-      setIsSaving(true);
-      setShowSaveNotification(true);
-      onSave(blocks);
-      setLastSaveTime(new Date());
+  // Exporter les notes
+  const handleExport = useCallback(async () => {
+    try {
+      const exportData = await notesFileStorage.exportAllNotes();
       
-      // Masquer l'indicateur de sauvegarde après 1 seconde
-      setTimeout(() => {
-        setIsSaving(false);
-      }, 1000);
+      const blob = new Blob([exportData], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
       
-      // Masquer la notification après 3 secondes
-      setTimeout(() => {
-        setShowSaveNotification(false);
-      }, 3000);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `papernotes-export-${new Date().toISOString().split('T')[0]}.json`;
+      a.click();
+      
+      URL.revokeObjectURL(url);
+      success('Export terminé !', 'Export');
+    } catch (error) {
+      console.error('Erreur export:', error);
+      showError('Erreur lors de l\'export', 'Export');
     }
-  }, [blocks, onSave]);
+  }, []);
 
-  // ✅ AJOUT: Gestionnaire de raccourci clavier Ctrl+S / Cmd+S
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      // Vérifier si Ctrl+S (Windows/Linux) ou Cmd+S (Mac) est pressé
-      if ((e.ctrlKey || e.metaKey) && e.key === 's') {
-        e.preventDefault(); // Empêcher le comportement par défaut du navigateur
-        handleSave();
-      }
-      
-      // Raccourci Escape pour fermer le menu slash
-      if (e.key === 'Escape' && showSlashMenu) {
-        setShowSlashMenu(false);
-        setSearchQuery('');
-      }
-    };
-
-    // Ajouter l'écouteur d'événements
-    document.addEventListener('keydown', handleKeyDown);
-
-    // Nettoyer l'écouteur lors du démontage
-    return () => {
-      document.removeEventListener('keydown', handleKeyDown);
-    };
-  }, [handleSave, showSlashMenu]);
-
-  // Exporter les notes en JSON
-  const handleExport = useCallback(() => {
-    const exportData = {
-      paper: {
-        title: paper.title,
-        date: paper.date,
-        tags: paper.tags
-      },
-      blocks: blocks,
-      metadata: {
-        blockCount: blocks.length,
-        wordCount: blocks.reduce((acc, block) => {
-          if (block.type !== 'image' && block.content) {
-            return acc + block.content.trim().split(/\s+/).length;
-          }
-          return acc;
-        }, 0),
-        exportDate: new Date().toISOString()
-      }
-    };
-
-    const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `notes-${paper.title.replace(/\s+/g, '-').toLowerCase()}-${new Date().toISOString().split('T')[0]}.json`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
-  }, [blocks, paper]);
-
-  // Auto-save avec debounce
-  useEffect(() => {
-    if (onSave) {
-      const timer = setTimeout(() => {
-        onSave(blocks);
-        setLastSaveTime(new Date());
-      }, 2000); // Auto-save après 2 secondes d'inactivité
-      
-      return () => clearTimeout(timer);
-    }
-  }, [blocks, onSave]);
-
-  // Fermer le menu si on clique en dehors
-  useEffect(() => {
-    const handleClickOutside = (event: MouseEvent): void => {
-      if (menuRef.current && !menuRef.current.contains(event.target as Node)) {
-        setShowSlashMenu(false);
-        setSearchQuery('');
-      }
-    };
-
-    if (showSlashMenu) {
-      document.addEventListener('mousedown', handleClickOutside);
-    }
-
-    return () => {
-      document.removeEventListener('mousedown', handleClickOutside);
-    };
-  }, [showSlashMenu]);
-
-  // Rendre le bon composant selon le type de bloc
-  const renderBlock = (block: Block): React.ReactElement => {
+  // Render d'un bloc selon son type
+  const renderBlock = (block: Block) => {
     const commonProps = {
       block,
       updateContent: updateBlockContent,
@@ -296,20 +322,9 @@ const PaperNotes: React.FC<PaperNotesProps> = ({
     }
   };
 
-  // Formater l'heure de la dernière sauvegarde
-  const formatLastSaveTime = () => {
-    if (!lastSaveTime) return '';
-    const now = new Date();
-    const diff = Math.floor((now.getTime() - lastSaveTime.getTime()) / 1000);
-    
-    if (diff < 60) return 'Sauvegardé à l\'instant';
-    if (diff < 3600) return `Sauvegardé il y a ${Math.floor(diff / 60)} min`;
-    return `Sauvegardé à ${lastSaveTime.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}`;
-  };
-
   return (
     <div className="h-full bg-white overflow-hidden flex flex-col">
-      {/* Header avec les informations du papier - plus compact */}
+      {/* Header avec les informations du papier */}
       <div className="border-b bg-gradient-to-b from-gray-50 to-white">
         <div className="relative h-32 overflow-hidden">
           {paper.image && (
@@ -321,105 +336,118 @@ const PaperNotes: React.FC<PaperNotesProps> = ({
           )}
           <div className="absolute inset-0 bg-gradient-to-t from-white via-white/80 to-transparent" />
           
+          {/* Informations du paper */}
+          <div className="absolute bottom-4 left-6 right-6">
+            <h1 className="text-xl font-bold text-gray-900 mb-1">
+              {paper.title}
+            </h1>
+            <div className="flex items-center text-sm text-gray-600 space-x-4">
+              <div className="flex items-center">
+                <Calendar className="w-4 h-4 mr-1" />
+                {paper.publication_date || 'Date non spécifiée'}
+              </div>
+              {paper.authors && (
+                <div className="flex items-center">
+                  <FileText className="w-4 h-4 mr-1" />
+                  {paper.authors.length > 50 ? `${paper.authors.substring(0, 50)}...` : paper.authors}
+                </div>
+              )}
+              {paper.url && (
+                <a 
+                  href={paper.url} 
+                  target="_blank" 
+                  rel="noopener noreferrer"
+                  className="flex items-center hover:text-blue-600"
+                >
+                  <ExternalLink className="w-4 h-4 mr-1" />
+                  Lien original
+                </a>
+              )}
+            </div>
+          </div>
+
           {/* Boutons d'action */}
           <div className="absolute top-4 right-4 flex gap-2 z-10">
-            {/* ✅ MODIFICATION: Bouton Sauvegarder avec indicateur et raccourci */}
+            {/* Toggle auto-sauvegarde */}
             <button
               type="button"
-              onClick={handleSave}
-              className={`px-3 py-2 rounded-lg shadow-lg transition-all flex items-center gap-2 ${
-                isSaving 
-                  ? 'bg-green-600 text-white animate-pulse' 
-                  : 'bg-green-500 text-white hover:bg-green-600'
+              onClick={() => setAutoSaveEnabled(!autoSaveEnabled)}
+              className={`p-2 rounded-full shadow-lg transition-all text-sm ${
+                autoSaveEnabled 
+                  ? 'bg-green-500 text-white' 
+                  : 'bg-gray-200 text-gray-600'
               }`}
-              title="Sauvegarder (Ctrl+S / Cmd+S)"
-              disabled={isSaving}
+              title={autoSaveEnabled ? 'Auto-sauvegarde activée' : 'Auto-sauvegarde désactivée'}
             >
-              <Save className="w-4 h-4" />
-              <span className="text-sm font-medium">
-                {isSaving ? 'Sauvegarde...' : 'Sauvegarder'}
-              </span>
-              <kbd className="hidden sm:inline-block text-xs bg-green-600 px-1 rounded">
-                {navigator.platform.includes('Mac') ? '⌘' : 'Ctrl'}+S
-              </kbd>
+              AUTO
             </button>
-            
-            {/* Bouton Exporter */}
+
+            {/* Bouton Sauvegarder manuel */}
+            <button
+              type="button"
+              onClick={handleManualSave}
+              className={`p-2 rounded-full shadow-lg transition-all ${
+                isSaving 
+                  ? 'bg-yellow-500 text-white' 
+                  : 'bg-blue-600 text-white hover:bg-blue-700'
+              }`}
+              title="Sauvegarder maintenant"
+            >
+              {isSaving ? (
+                <div className="w-5 h-5 animate-spin border-2 border-white border-t-transparent rounded-full"></div>
+              ) : (
+                <Save className="w-5 h-5" />
+              )}
+            </button>
+
+            {/* Bouton Export */}
             <button
               type="button"
               onClick={handleExport}
-              className="p-2 bg-blue-500 text-white rounded-lg shadow-lg hover:bg-blue-600 transition-colors"
-              title="Exporter les notes"
+              className="p-2 bg-gray-600 text-white rounded-full shadow-lg hover:bg-gray-700 transition-all"
+              title="Exporter toutes les notes"
             >
-              <Download className="w-4 h-4" />
+              <Download className="w-5 h-5" />
             </button>
-          </div>
 
-          <div className="absolute bottom-3 left-6 right-6">
-            <h1 className="text-2xl font-bold text-gray-900 mb-1 line-clamp-2">{paper.title}</h1>
-            <div className="flex items-center gap-4 text-sm text-gray-600">
-              <span className="flex items-center gap-1">
-                <Calendar className="w-3 h-3" />
-                {paper.date}
-              </span>
-              {paper.tags && paper.tags.length > 0 && (
-                <span className="flex items-center gap-1">
-                  <Tag className="w-3 h-3" />
-                  {paper.tags.slice(0, 2).join(', ')}
-                  {paper.tags.length > 2 && ` +${paper.tags.length - 2}`}
-                </span>
-              )}
-              {paper.pdfUrl && (
-                <a
-                  href={paper.pdfUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="flex items-center gap-1 hover:text-blue-600 transition-colors"
-                >
-                  <FileText className="w-3 h-3" />
-                  PDF
-                  <ExternalLink className="w-2 h-2" />
-                </a>
-              )}
-              {/* ✅ AJOUT: Indicateur de dernière sauvegarde */}
-              {lastSaveTime && (
-                <span className="text-xs text-gray-500 ml-auto">
-                  {formatLastSaveTime()}
-                </span>
-              )}
-            </div>
+            {/* Bouton Fermer */}
+            <button
+              type="button"
+              onClick={onClose}
+              className="p-2 bg-red-600 text-white rounded-full shadow-lg hover:bg-red-700 transition-all"
+              title="Fermer"
+            >
+              ×
+            </button>
           </div>
         </div>
       </div>
 
       {/* Zone d'édition des notes */}
-      <div className="flex-1 overflow-y-auto">
-        <div className="max-w-4xl mx-auto p-6">
-          <div className="space-y-2">
-            {blocks.map((block) => (
-              <div key={block.id} className="relative">
-                {renderBlock(block)}
-              </div>
-            ))}
-          </div>
-
-          {/* Bouton pour ajouter un nouveau bloc */}
-          <button
-            type="button"
-            onClick={() => addNewBlock(blocks[blocks.length - 1].id)}
-            className="mt-4 p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded transition-all flex items-center gap-2"
-          >
-            <Plus className="w-4 h-4" />
-            Ajouter un bloc
-          </button>
+      <div className="flex-1 overflow-auto p-6">
+        <div className="max-w-4xl mx-auto space-y-2">
+          {blocks.map((block) => (
+            <div key={block.id}>
+              {renderBlock(block)}
+            </div>
+          ))}
         </div>
       </div>
 
-      {/* Menu Slash */}
+      {/* Input caché pour upload d'images */}
+      <input
+        ref={imageInputRef}
+        type="file"
+        accept="image/*"
+        onChange={handleImageUpload}
+        className="hidden"
+      />
+
+      {/* Menu des commandes slash */}
       {showSlashMenu && (
-        <div
+        <div 
           ref={menuRef}
-          className="absolute bg-white shadow-xl rounded-lg border border-gray-200 py-2 z-50 w-64"
+          className="fixed bg-white border border-gray-200 rounded-lg shadow-xl z-50 min-w-80"
           style={{
             top: `${slashMenuPosition.top}px`,
             left: `${slashMenuPosition.left}px`
@@ -456,24 +484,28 @@ const PaperNotes: React.FC<PaperNotesProps> = ({
         </div>
       )}
 
-      {/* ✅ AJOUT: Notification de sauvegarde réussie */}
-      {showSaveNotification && (
-        <div className="fixed bottom-4 right-4 bg-green-600 text-white px-4 py-3 rounded-lg shadow-lg flex items-center gap-2 animate-slide-in-up">
-          <Check className="w-5 h-5" />
-          <div>
-            <p className="font-medium">Notes sauvegardées</p>
-            <p className="text-xs opacity-90">{formatLastSaveTime()}</p>
+      {/* Indicateur de statut */}
+      <div className="border-t bg-gray-50 px-6 py-2">
+        <div className="flex items-center justify-between text-xs text-gray-500">
+          <div className="flex items-center space-x-4">
+            <span>{blocks.length} bloc{blocks.length > 1 ? 's' : ''}</span>
+            <span>
+              {blocks.reduce((acc, block) => {
+                if (block.content) {
+                  return acc + block.content.trim().split(/\s+/).length;
+                }
+                return acc;
+              }, 0)} mots
+            </span>
+            <span className={`flex items-center ${autoSaveEnabled ? 'text-green-600' : 'text-gray-400'}`}>
+              <div className={`w-2 h-2 rounded-full mr-1 ${autoSaveEnabled ? 'bg-green-500' : 'bg-gray-400'}`}></div>
+              Auto-sauvegarde {autoSaveEnabled ? 'ON' : 'OFF'}
+            </span>
           </div>
-        </div>
-      )}
-
-      {/* ✅ AJOUT: Aide pour les raccourcis clavier */}
-      <div className="fixed bottom-4 left-4 text-xs text-gray-400">
-        <div className="flex items-center gap-2">
-          <kbd className="px-2 py-1 bg-gray-100 rounded border border-gray-200">
-            {navigator.platform.includes('Mac') ? '⌘' : 'Ctrl'}+S
-          </kbd>
-          <span>pour sauvegarder</span>
+          
+          <div className="text-gray-400">
+            Sauvegardé dans: MyPaperList/{paper.id}_{paper.title?.substring(0, 20)}...
+          </div>
         </div>
       </div>
     </div>

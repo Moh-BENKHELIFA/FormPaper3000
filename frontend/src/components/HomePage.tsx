@@ -334,13 +334,7 @@ const HomePageContent: React.FC = () => {
             {/* Composant PaperNotes */}
             <div className="flex-1">
               <PaperNotes
-                paper={{
-                  title: appState.currentPaper.title,
-                  date: appState.currentPaper.publication_date,
-                  tags: appState.currentPaper.categories?.map(cat => cat.name),
-                  image: appState.currentPaper.image || undefined,
-                  pdfUrl: appState.currentPaper.url || undefined
-                }}
+                paper={appState.currentPaper}  // Passer l'objet complet
                 initialBlocks={appState.currentPaper.notes}
                 onClose={navigateToHome}
                 onSave={handleSaveNotes}
